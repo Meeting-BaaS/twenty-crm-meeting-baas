@@ -1,12 +1,18 @@
 import { APPLICATION_UNIVERSAL_IDENTIFIER } from 'src/constants/universal-identifiers';
+import {
+  ensureIntegrationTestEnvironment,
+  hasIntegrationTestEnvironment,
+} from 'src/__tests__/setup-test';
 import { appBuild, appDeploy, appInstall, appUninstall } from 'twenty-sdk/cli';
 import { MetadataApiClient } from 'twenty-client-sdk/metadata';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const APP_PATH = process.cwd();
 
-describe('App installation', () => {
+describe.skipIf(!hasIntegrationTestEnvironment())('App installation', () => {
   beforeAll(async () => {
+    await ensureIntegrationTestEnvironment();
+
     const buildResult = await appBuild({
       appPath: APP_PATH,
       tarball: true,

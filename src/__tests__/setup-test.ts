@@ -1,12 +1,14 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { beforeAll } from 'vitest';
 
 const CONFIG_DIR = path.join(os.homedir(), '.twenty');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.test.json');
 
-beforeAll(async () => {
+export const hasIntegrationTestEnvironment = (): boolean =>
+  Boolean(process.env.TWENTY_API_URL && process.env.TWENTY_API_KEY);
+
+export const ensureIntegrationTestEnvironment = async () => {
   const apiUrl = process.env.TWENTY_API_URL!;
   const token = process.env.TWENTY_API_KEY!;
 
@@ -50,4 +52,4 @@ beforeAll(async () => {
   );
 
   process.env.TWENTY_APP_ACCESS_TOKEN ??= token;
-});
+};
