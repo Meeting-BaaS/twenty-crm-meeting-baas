@@ -3,14 +3,15 @@ import { MeetingBaasApiClient } from '../meeting-baas-api-client';
 import { resolveCalendarEventOwner, checkIfRecordingExistsForEvent, upsertRecording } from '../twenty-sync-service';
 import { detectPlatform } from '../twenty-sync-service';
 import { createLogger } from '../logger';
-import { getRestApiUrl, restHeaders } from '../utils';
+import { buildRestUrl, restHeaders } from '../utils';
 
 const logger = createLogger('schedule-bot');
 
 type RecordingPreference = 'RECORD_ALL' | 'RECORD_ORGANIZED' | 'RECORD_NONE';
 
-const TWENTY_API_KEY = process.env.TWENTY_API_KEY ?? '';
-
+// Fetch the workspace member's recording preference. This can't be cached
+// because each logic function invocation runs in an isolated context —
+// there's no shared memory between triggers.
 const fetchWorkspaceMemberPreference = async (
   workspaceMemberId: string,
 ): Promise<RecordingPreference> => {
@@ -18,7 +19,7 @@ const fetchWorkspaceMemberPreference = async (
     const response = await axios({
       method: 'GET',
       headers: restHeaders(),
-      url: `${getRestApiUrl()}/workspaceMembers/${workspaceMemberId}`,
+      url: buildRestUrl(`workspaceMembers/${workspaceMemberId}`),
     });
     const memberData = response.data?.data ?? response.data;
     return (memberData?.recordingPreference as RecordingPreference) ?? 'RECORD_NONE';
@@ -29,16 +30,19 @@ const fetchWorkspaceMemberPreference = async (
   }
 };
 
+// The recording preference is fetched per-call rather than from the event payload
+// because Twenty's database event payloads only contain the triggering object's fields
+// (calendarEvent), not joined data from other objects (workspaceMember).
 const isOrganizer = async (
   calendarEventId: string,
   workspaceMemberId: string,
 ): Promise<boolean> => {
   try {
-    const response = await axios({
-      method: 'GET',
-      headers: { Authorization: `Bearer ${TWENTY_API_KEY}` },
-      url: `${getRestApiUrl()}/calendarEventParticipants?filter=calendarEventId%5Beq%5D%3A%22${encodeURIComponent(calendarEventId)}%22&limit=50`,
+    const url = buildRestUrl('calendarEventParticipants', {
+      filter: { calendarEventId: { eq: calendarEventId } },
+      limit: 50,
     });
+    const response = await axios.get(url, { headers: restHeaders() });
     const participants: Record<string, unknown>[] =
       response.data?.data?.calendarEventParticipants ?? [];
 

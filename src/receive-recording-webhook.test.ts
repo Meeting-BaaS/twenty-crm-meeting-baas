@@ -10,7 +10,6 @@ describe('receive-recording-webhook route', () => {
       isAuthRequired: false,
       forwardedRequestHeaders: [
         'x-mb-secret',
-        'x-meeting-baas-api-key',
         'content-type',
       ],
     });

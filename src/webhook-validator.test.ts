@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { WebhookEvent } from './types';
 import {
   getApiKeyFingerprint,
-  isValidMeetingBaasPayload,
+  parseWebhookPayload,
   verifyWebhookApiKey,
 } from './webhook-validator';
 
@@ -11,15 +10,6 @@ describe('verifyWebhookApiKey', () => {
     const result = verifyWebhookApiKey(
       { 'X-MB-SECRET': 'secret-123' },
       'secret-123',
-    );
-
-    expect(result).toEqual({ isValid: true });
-  });
-
-  it('accepts the legacy V1 x-meeting-baas-api-key header', () => {
-    const result = verifyWebhookApiKey(
-      { 'x-meeting-baas-api-key': 'legacy-key' },
-      'legacy-key',
     );
 
     expect(result).toEqual({ isValid: true });
@@ -37,33 +27,77 @@ describe('verifyWebhookApiKey', () => {
     });
   });
 
-  it('rejects requests without either supported auth header', () => {
+  it('rejects requests without the x-mb-secret header', () => {
     const result = verifyWebhookApiKey({ 'content-type': 'application/json' }, 'expected-secret');
 
     expect(result).toEqual({
       isValid: false,
-      reason: 'missing x-mb-secret or x-meeting-baas-api-key header',
+      reason: 'missing x-mb-secret header',
     });
   });
 });
 
-describe('isValidMeetingBaasPayload', () => {
-  it('accepts supported webhook payloads with a bot id', () => {
-    expect(
-      isValidMeetingBaasPayload({
-        event: WebhookEvent.COMPLETED,
+describe('parseWebhookPayload', () => {
+  it('parses a valid bot.completed payload', () => {
+    const { payload } = parseWebhookPayload({
+      event: 'bot.completed',
+      data: { bot_id: 'bot-123', duration_seconds: 1800 },
+    });
+
+    expect(payload.event).toBe('bot.completed');
+    expect(payload.data.bot_id).toBe('bot-123');
+  });
+
+  it('parses a valid bot.failed payload', () => {
+    const { payload } = parseWebhookPayload({
+      event: 'bot.failed',
+      data: { bot_id: 'bot-456', error_message: 'timeout', error_code: 'TIMEOUT' },
+    });
+
+    expect(payload.event).toBe('bot.failed');
+    expect(payload.data.bot_id).toBe('bot-456');
+  });
+
+  it('unwraps payload from a wrapper object with headers', () => {
+    const { payload, extractedHeaders } = parseWebhookPayload({
+      headers: { 'x-mb-secret': 'secret-123' },
+      body: {
+        event: 'bot.completed',
         data: { bot_id: 'bot-123' },
-      }),
-    ).toBe(true);
+      },
+    });
+
+    expect(payload.event).toBe('bot.completed');
+    expect(extractedHeaders).toEqual({ 'x-mb-secret': 'secret-123' });
   });
 
   it('rejects payloads with unsupported events', () => {
-    expect(
-      isValidMeetingBaasPayload({
+    expect(() =>
+      parseWebhookPayload({
         event: 'bot.unknown',
         data: { bot_id: 'bot-123' },
       }),
-    ).toBe(false);
+    ).toThrow('Invalid or missing webhook payload');
+  });
+
+  it('rejects payloads missing bot_id', () => {
+    expect(() =>
+      parseWebhookPayload({
+        event: 'bot.completed',
+        data: {},
+      }),
+    ).toThrow('Invalid or missing webhook payload');
+  });
+
+  it('parses JSON string payloads', () => {
+    const { payload } = parseWebhookPayload(
+      JSON.stringify({
+        event: 'bot.completed',
+        data: { bot_id: 'bot-123' },
+      }),
+    );
+
+    expect(payload.event).toBe('bot.completed');
   });
 });
 

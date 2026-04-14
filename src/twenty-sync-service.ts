@@ -5,9 +5,22 @@ import type {
   RecordingUpsertInput,
   SyncResult,
 } from './types';
-import { getRestApiUrl, restHeaders } from './utils';
+import { buildRestUrl, getRestApiUrl, restHeaders } from './utils';
 
 const TWENTY_API_KEY: string = process.env.TWENTY_API_KEY ?? '';
+
+const authHeaders = () => ({ Authorization: `Bearer ${TWENTY_API_KEY}` });
+
+// --- REST API response types ---
+
+type TwentyListResponse<T extends string> = {
+  data?: Record<T, Record<string, unknown>[]>;
+};
+
+type TwentyDetailResponse = {
+  data?: Record<string, unknown>;
+  id?: string;
+};
 
 // --- Platform Detection ---
 
@@ -36,14 +49,16 @@ export const resolveCalendarEventOwner = async (
 
   try {
     // 1. CalendarEvent -> CalendarChannelEventAssociation -> calendarChannelId
-    const assocResponse = await axios({
-      method: 'GET',
-      headers: { Authorization: `Bearer ${TWENTY_API_KEY}` },
-      url: `${getRestApiUrl()}/calendarChannelEventAssociations?filter=calendarEventId%5Beq%5D%3A%22${encodeURIComponent(calendarEventId)}%22&limit=1`,
+    const assocUrl = buildRestUrl('calendarChannelEventAssociations', {
+      filter: { calendarEventId: { eq: calendarEventId } },
+      limit: 1,
     });
+    const assocResponse = await axios.get<TwentyListResponse<'calendarChannelEventAssociations'>>(
+      assocUrl,
+      { headers: authHeaders() },
+    );
 
-    const associations: Record<string, unknown>[] =
-      assocResponse.data?.data?.calendarChannelEventAssociations ?? [];
+    const associations = assocResponse.data?.data?.calendarChannelEventAssociations ?? [];
     if (associations.length === 0) {
       ownershipCache.set(calendarEventId, result);
       return result;
@@ -56,28 +71,26 @@ export const resolveCalendarEventOwner = async (
     }
 
     // 2. CalendarChannel -> connectedAccountId
-    const channelResponse = await axios({
-      method: 'GET',
-      headers: { Authorization: `Bearer ${TWENTY_API_KEY}` },
-      url: `${getRestApiUrl()}/calendarChannels/${calendarChannelId}`,
-    });
+    const channelResponse = await axios.get<TwentyDetailResponse>(
+      `${getRestApiUrl()}/calendarChannels/${calendarChannelId}`,
+      { headers: authHeaders() },
+    );
 
     const channelData = channelResponse.data?.data ?? channelResponse.data;
-    const connectedAccountId = channelData?.connectedAccountId as string | undefined;
+    const connectedAccountId = (channelData as Record<string, unknown>)?.connectedAccountId as string | undefined;
     if (!connectedAccountId) {
       ownershipCache.set(calendarEventId, result);
       return result;
     }
 
     // 3. ConnectedAccount -> accountOwnerId (= workspaceMemberId)
-    const accountResponse = await axios({
-      method: 'GET',
-      headers: { Authorization: `Bearer ${TWENTY_API_KEY}` },
-      url: `${getRestApiUrl()}/connectedAccounts/${connectedAccountId}`,
-    });
+    const accountResponse = await axios.get<TwentyDetailResponse>(
+      `${getRestApiUrl()}/connectedAccounts/${connectedAccountId}`,
+      { headers: authHeaders() },
+    );
 
     const accountData = accountResponse.data?.data ?? accountResponse.data;
-    const workspaceMemberId = accountData?.accountOwnerId as string | undefined;
+    const workspaceMemberId = (accountData as Record<string, unknown>)?.accountOwnerId as string | undefined;
     if (!workspaceMemberId) {
       ownershipCache.set(calendarEventId, result);
       return result;
@@ -86,16 +99,14 @@ export const resolveCalendarEventOwner = async (
 
     // 4. WorkspaceMember -> display name
     try {
-      const memberResponse = await axios({
-        method: 'GET',
-        headers: { Authorization: `Bearer ${TWENTY_API_KEY}` },
-        url: `${getRestApiUrl()}/workspaceMembers/${workspaceMemberId}`,
-      });
+      const memberResponse = await axios.get<TwentyDetailResponse>(
+        `${getRestApiUrl()}/workspaceMembers/${workspaceMemberId}`,
+        { headers: authHeaders() },
+      );
 
       const memberData = memberResponse.data?.data ?? memberResponse.data;
-      const firstName = (memberData?.name?.firstName as string) ?? '';
-      const lastName = (memberData?.name?.lastName as string) ?? '';
-      const fullName = [firstName, lastName].filter(Boolean).join(' ');
+      const name = (memberData as Record<string, unknown>)?.name as { firstName?: string; lastName?: string } | undefined;
+      const fullName = [name?.firstName, name?.lastName].filter(Boolean).join(' ');
       if (fullName) result.workspaceMemberName = fullName;
     } catch {
       // Non-fatal: we still have the workspaceMemberId
@@ -115,13 +126,14 @@ export const checkIfRecordingExistsForEvent = async (
   calendarEventId: string,
 ): Promise<boolean> => {
   try {
-    const response = await axios({
-      method: 'GET',
-      headers: { Authorization: `Bearer ${TWENTY_API_KEY}` },
-      url: `${getRestApiUrl()}/recordings?filter=calendarEventId%5Beq%5D%3A%22${encodeURIComponent(calendarEventId)}%22&limit=1`,
+    const url = buildRestUrl('recordings', {
+      filter: { calendarEventId: { eq: calendarEventId } },
+      limit: 1,
     });
-    const recordings: Record<string, unknown>[] =
-      response.data?.data?.recordings ?? [];
+    const response = await axios.get<TwentyListResponse<'recordings'>>(url, {
+      headers: authHeaders(),
+    });
+    const recordings = response.data?.data?.recordings ?? [];
     return recordings.length > 0;
   } catch {
     return false;
@@ -132,13 +144,14 @@ export const checkIfRecordingExists = async (
   botId: string,
 ): Promise<string | null> => {
   try {
-    const response = await axios({
-      method: 'GET',
-      headers: { Authorization: `Bearer ${TWENTY_API_KEY}` },
-      url: `${getRestApiUrl()}/recordings?filter=botId%5Beq%5D%3A%22${encodeURIComponent(botId)}%22`,
+    const url = buildRestUrl('recordings', {
+      filter: { botId: { eq: botId } },
+    });
+    const response = await axios.get<TwentyListResponse<'recordings'>>(url, {
+      headers: authHeaders(),
     });
     const recording = response.data?.data?.recordings?.[0];
-    return recording?.id ?? null;
+    return (recording?.id as string) ?? null;
   } catch {
     return null;
   }

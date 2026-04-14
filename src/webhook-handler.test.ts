@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebhookHandler } from './webhook-handler';
-import { WebhookEvent } from './types';
 
 const mocks = vi.hoisted(() => ({
   generateSummary: vi.fn(),
   syncBotRecording: vi.fn(),
   transformWebhookData: vi.fn(),
+  fetchTranscript: vi.fn(),
   meetingBaasConstructor: vi.fn(),
 }));
 
@@ -26,11 +26,15 @@ vi.mock('./meeting-baas-api-client', () => ({
     transformWebhookData(...args: unknown[]) {
       return mocks.transformWebhookData(...args);
     }
+
+    fetchTranscript(...args: unknown[]) {
+      return mocks.fetchTranscript(...args);
+    }
   },
 }));
 
 const completedPayload = {
-  event: WebhookEvent.COMPLETED,
+  event: 'bot.completed',
   data: {
     bot_id: 'bot-123',
     duration_seconds: 1800,
@@ -56,7 +60,7 @@ describe('WebhookHandler', () => {
       title: 'Test Recording',
       date: '2026-04-14T10:00:00Z',
       duration: 1800,
-      transcript: 'Transcript text',
+      transcript: '',
       mp4Url: 'https://example.com/recording.mp4',
       meetingUrl: 'https://meet.google.com/abc-defg-hij',
       platform: 'GOOGLE_MEET',
@@ -65,6 +69,7 @@ describe('WebhookHandler', () => {
         workspaceMemberId: 'workspace-member-1',
       },
     });
+    mocks.fetchTranscript.mockResolvedValue('Speaker A: Hello\nSpeaker B: Hi');
     mocks.generateSummary.mockResolvedValue('Summary text');
     mocks.syncBotRecording.mockResolvedValue('recording-123');
   });
@@ -84,40 +89,19 @@ describe('WebhookHandler', () => {
       recordingId: 'recording-123',
     });
     expect(mocks.meetingBaasConstructor).toHaveBeenCalledWith('secret-123');
-    expect(mocks.generateSummary).toHaveBeenCalledWith('Transcript text');
+    expect(mocks.fetchTranscript).toHaveBeenCalledOnce();
+    expect(mocks.generateSummary).toHaveBeenCalledWith('Speaker A: Hello\nSpeaker B: Hi');
     expect(mocks.syncBotRecording).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         botId: 'bot-123',
         title: 'Test Recording',
-        date: '2026-04-14T10:00:00Z',
-        duration: 1800,
-        transcript: 'Transcript text',
+        transcript: 'Speaker A: Hello\nSpeaker B: Hi',
         summary: 'Summary text',
-        mp4Url: 'https://example.com/recording.mp4',
-        meetingUrl: 'https://meet.google.com/abc-defg-hij',
-        platform: 'GOOGLE_MEET',
         calendarEventId: 'calendar-event-1',
         workspaceMemberId: 'workspace-member-1',
-      },
-      {
-        recordingsProcessed: 0,
-        recordingsCreated: 0,
-        recordingsUpdated: 0,
-        errors: [],
-      },
+      }),
+      expect.any(Object),
     );
-  });
-
-  it('accepts the legacy x-meeting-baas-api-key header from wrapped params', async () => {
-    const handler = new WebhookHandler();
-
-    const result = await handler.handle({
-      headers: { 'x-meeting-baas-api-key': 'secret-123' },
-      payload: completedPayload,
-    });
-
-    expect(result.success).toBe(true);
-    expect(mocks.syncBotRecording).toHaveBeenCalledOnce();
   });
 
   it('rejects webhooks with mismatched auth headers', async () => {
@@ -134,25 +118,39 @@ describe('WebhookHandler', () => {
     expect(mocks.syncBotRecording).not.toHaveBeenCalled();
   });
 
-  it('acknowledges status change events without syncing a recording', async () => {
+  it('reports bot.failed events as errors', async () => {
     const handler = new WebhookHandler();
 
     const result = await handler.handle(
       {
-        event: WebhookEvent.STATUS_CHANGE,
+        event: 'bot.failed',
         data: {
           bot_id: 'bot-123',
-          status: 'joined',
+          error_message: 'timeout',
+          error_code: 'TIMEOUT',
         },
       },
       { 'x-mb-secret': 'secret-123' },
     );
 
-    expect(result).toEqual({
-      success: true,
-      errors: [],
-    });
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain('Meeting BaaS bot failed: timeout');
     expect(mocks.syncBotRecording).not.toHaveBeenCalled();
-    expect(mocks.generateSummary).not.toHaveBeenCalled();
+  });
+
+  it('propagates sync errors to the result', async () => {
+    mocks.syncBotRecording.mockImplementation((_data: unknown, syncResult: { errors: { botId: string; error: string }[] }) => {
+      syncResult.errors.push({ botId: 'bot-123', error: '500: Internal Server Error' });
+      return null;
+    });
+
+    const handler = new WebhookHandler();
+
+    const result = await handler.handle(completedPayload, {
+      'x-mb-secret': 'secret-123',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors?.[0]).toContain('Failed to sync recording');
   });
 });

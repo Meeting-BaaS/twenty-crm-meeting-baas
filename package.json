@@ -22,7 +22,8 @@
     "@meeting-baas/sdk": "^6.0.5",
     "axios": "^1.15.0",
     "twenty-client-sdk": "0.9.0",
-    "twenty-sdk": "0.9.0"
+    "twenty-sdk": "0.9.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@emotion/react": "^11.14.0",

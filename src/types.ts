@@ -1,24 +1,15 @@
-// SDK V2 types and runtime constants
+// SDK V2 types
 import type { V2 } from '@meeting-baas/sdk';
 
 export type BotWebhookCompleted = V2.BotWebhookCompleted;
 export type BotWebhookCompletedData = V2.BotWebhookCompletedData;
 export type BotWebhookFailed = V2.BotWebhookFailed;
 export type BotWebhookFailedData = V2.BotWebhookFailedData;
-export type BotWebhookStatusChange = V2.BotWebhookStatusChange;
 
-// Union of all webhook payloads we handle
+// V2 callbacks only send bot.completed and bot.failed (no status_change)
 export type MeetingBaasWebhookPayload =
   | BotWebhookCompleted
-  | BotWebhookFailed
-  | BotWebhookStatusChange;
-
-// Webhook event discriminants derived from SDK types
-export const WebhookEvent = {
-  COMPLETED: 'bot.completed' as BotWebhookCompleted['event'],
-  FAILED: 'bot.failed' as BotWebhookFailed['event'],
-  STATUS_CHANGE: 'bot.status_change' as BotWebhookStatusChange['event'],
-} as const;
+  | BotWebhookFailed;
 
 // Meeting platform types
 export type MeetingPlatform =

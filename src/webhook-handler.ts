@@ -1,10 +1,10 @@
 import { createLogger } from './logger';
 import { generateSummary } from './generate-summary';
 import { MeetingBaasApiClient } from './meeting-baas-api-client';
-import { WebhookEvent, type MeetingBaasWebhookPayload, type ProcessResult, type SyncResult } from './types';
+import type { ProcessResult, SyncResult } from './types';
 import {
   getApiKeyFingerprint,
-  isValidMeetingBaasPayload,
+  parseWebhookPayload,
   verifyWebhookApiKey
 } from './webhook-validator';
 import { syncBotRecording } from './twenty-sync-service';
@@ -27,13 +27,15 @@ export class WebhookHandler {
     try {
       this.logger.debug('invoked');
 
+      // MEETING_BAAS_API_KEY is injected by Twenty's logic function executor
+      // from the app's encrypted applicationVariable (set in UI under Settings > Variables)
       const meetingBaasApiKey = process.env.MEETING_BAAS_API_KEY || '';
       if (!meetingBaasApiKey) {
         this.logger.critical('MEETING_BAAS_API_KEY not configured');
         throw new Error('MEETING_BAAS_API_KEY environment variable is required');
       }
 
-      const { payload, extractedHeaders } = this.parsePayload(params);
+      const { payload, extractedHeaders } = parseWebhookPayload(params);
       const finalHeaders = extractedHeaders || headers;
 
       this.logger.debug(`payload event=${payload.event} bot_id=${payload.data.bot_id}`);
@@ -43,19 +45,13 @@ export class WebhookHandler {
       this.verifyApiKey(finalHeaders, meetingBaasApiKey);
       this.logger.debug('API key verification: ok');
 
-      if (payload.event === WebhookEvent.FAILED) {
+      if (payload.event === 'bot.failed') {
         const failedData = payload.data;
         this.logger.error(`bot failed: ${failedData.error_message} (${failedData.error_code})`);
         throw new Error(`Meeting BaaS bot failed: ${failedData.error_message}`);
       }
 
-      if (payload.event === WebhookEvent.STATUS_CHANGE) {
-        this.logger.debug(`${WebhookEvent.STATUS_CHANGE} event received - no action needed`);
-        result.success = true;
-        return result;
-      }
-
-      // Transform webhook data
+      // bot.completed — transform, fetch transcript, summarize, sync
       const completedData = payload.data;
       const meetingBaasClient = new MeetingBaasApiClient(meetingBaasApiKey);
       const recordingData = meetingBaasClient.transformWebhookData(
@@ -65,7 +61,6 @@ export class WebhookHandler {
 
       result.durationMinutes = Math.round(recordingData.duration / 60);
 
-      // Fetch transcript from diarization/transcription URL
       const transcript = await meetingBaasClient.fetchTranscript(recordingData);
       if (transcript) {
         recordingData.transcript = transcript;
@@ -78,8 +73,8 @@ export class WebhookHandler {
         this.logger.debug('AI summary generated');
       }
 
-      // calendarEventId and workspaceMemberId are passed via extra
-      // when schedule-bot.ts creates the scheduled bot
+      // calendarEventId and workspaceMemberId come from the bot's `extra` field,
+      // set by schedule-bot.ts when creating the scheduled bot
       const extra = recordingData.extra;
       const calendarEventId = extra.calendarEventId as string | undefined;
       const workspaceMemberId = extra.workspaceMemberId as string | undefined;
@@ -127,51 +122,6 @@ export class WebhookHandler {
     }
 
     return result;
-  }
-
-  private parsePayload(params: unknown): { payload: MeetingBaasWebhookPayload; extractedHeaders?: Record<string, string> } {
-    let normalizedParams = params;
-    let extractedHeaders: Record<string, string> | undefined;
-
-    if (typeof normalizedParams === 'string') {
-      try {
-        normalizedParams = JSON.parse(normalizedParams);
-      } catch {
-        throw new Error('Invalid or missing webhook payload');
-      }
-    }
-
-    let payload: MeetingBaasWebhookPayload | undefined;
-    if (isValidMeetingBaasPayload(normalizedParams)) {
-      payload = normalizedParams as MeetingBaasWebhookPayload;
-    } else if (normalizedParams && typeof normalizedParams === 'object') {
-      const wrapper = normalizedParams as Record<string, unknown>;
-
-      if (wrapper.headers && typeof wrapper.headers === 'object' && !Array.isArray(wrapper.headers)) {
-        extractedHeaders = wrapper.headers as Record<string, string>;
-      }
-
-      for (const key of ['params', 'payload', 'body', 'data', 'event']) {
-        const candidate = wrapper[key];
-        if (isValidMeetingBaasPayload(candidate)) {
-          payload = candidate as MeetingBaasWebhookPayload;
-          break;
-        }
-      }
-
-      if (!payload && typeof wrapper['event'] === 'string' && wrapper['data']) {
-        const reconstructed = { event: wrapper['event'], data: wrapper['data'] };
-        if (isValidMeetingBaasPayload(reconstructed)) {
-          payload = reconstructed as MeetingBaasWebhookPayload;
-        }
-      }
-    }
-
-    if (!payload) {
-      throw new Error('Invalid or missing webhook payload');
-    }
-
-    return { payload, extractedHeaders };
   }
 
   private verifyApiKey(

@@ -57,6 +57,53 @@ export class MeetingBaasApiClient {
     return botId;
   }
 
+  // Batch-create scheduled bots (up to 100 items per call)
+  async batchCreateScheduledBots(
+    items: Array<{
+      meetingUrl: string;
+      joinAt: string;
+      botName?: string;
+      recordingMode?: 'speaker_view' | 'gallery_view' | 'audio_only';
+      extra?: Record<string, unknown>;
+      callbackUrl?: string;
+      callbackSecret?: string;
+    }>,
+  ): Promise<{ botIds: string[]; errors: Array<{ index: number; code: string; message: string }> }> {
+    logger.debug(`batch scheduling ${items.length} bots`);
+
+    const params = items.map((item) => ({
+      meeting_url: item.meetingUrl,
+      join_at: item.joinAt,
+      bot_name: item.botName || 'Twenty CRM Recorder',
+      ...(item.recordingMode && { recording_mode: item.recordingMode }),
+      ...(item.extra && { extra: item.extra }),
+      ...(item.callbackUrl && {
+        callback_enabled: true as const,
+        callback_config: {
+          url: item.callbackUrl,
+          ...(item.callbackSecret && { secret: item.callbackSecret }),
+        },
+      }),
+    }));
+
+    const result = await this.client.batchCreateScheduledBots(params);
+
+    if (!result.success) {
+      const errorInfo = 'code' in result ? ` (${result.code})` : '';
+      throw new Error(`Meeting BaaS batch API error${errorInfo}: ${result.error}`);
+    }
+
+    const botIds = result.data.map((d) => d.bot_id);
+    const errors = result.errors.map((e) => ({
+      index: e.index,
+      code: e.code,
+      message: e.message,
+    }));
+
+    logger.debug(`batch result: ${botIds.length} created, ${errors.length} failed`);
+    return { botIds, errors };
+  }
+
   // Transform V2 bot.completed webhook data into normalized RecordingData
   transformWebhookData(
     data: V2.BotWebhookCompletedData,

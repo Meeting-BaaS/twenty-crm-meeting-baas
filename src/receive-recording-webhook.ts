@@ -14,7 +14,6 @@ export default defineLogicFunction({
     isAuthRequired: false,
     forwardedRequestHeaders: [
       'x-mb-secret',
-      'x-meeting-baas-api-key',
       'content-type',
     ],
   },

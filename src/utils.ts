@@ -11,6 +11,43 @@ export const restHeaders = (): Record<string, string> => ({
   'Content-Type': 'application/json',
 });
 
+// Build a Twenty REST API URL with typed filter and limit params.
+// Example: buildRestUrl('recordings', { filter: { botId: { eq: 'bot-123' } }, limit: 1 })
+// → https://api.twenty.com/rest/recordings?filter=botId[eq]:"bot-123"&limit=1
+
+type FilterCondition = Partial<Record<'eq' | 'gte' | 'lte' | 'is', string>>;
+
+export const buildRestUrl = (
+  resource: string,
+  options?: { filter?: Record<string, FilterCondition>; limit?: number; cursor?: string },
+): string => {
+  const base = `${getRestApiUrl()}/${resource}`;
+  if (!options) return base;
+
+  const params = new URLSearchParams();
+
+  if (options.filter) {
+    const filterParts = Object.entries(options.filter)
+      .flatMap(([field, conditions]) =>
+        Object.entries(conditions).map(
+          ([op, value]) => `${field}[${op}]:"${value}"`,
+        ),
+      )
+      .join(',');
+    params.set('filter', filterParts);
+  }
+
+  if (options.limit !== undefined) {
+    params.set('limit', String(options.limit));
+  }
+
+  if (options.cursor) {
+    params.set('starting_after', options.cursor);
+  }
+
+  return `${base}?${params.toString()}`;
+};
+
 export const formatDuration = (seconds: number): string => {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);

@@ -11,14 +11,15 @@ export { default as MeetingBaasSettingsComponent } from './front-components/meet
 export { default as OnCalendarEventCreated } from './logic-functions/on-calendar-event-created';
 export { default as OnCalendarEventUpdated } from './logic-functions/on-calendar-event-updated';
 
+// Logic functions (HTTP-triggered)
+export { default as BatchScheduleBots } from './logic-functions/batch-schedule-bots';
+
 // Types
-export { WebhookEvent } from './types';
 export type {
   BotWebhookCompleted,
   BotWebhookCompletedData,
   BotWebhookFailed,
   BotWebhookFailedData,
-  BotWebhookStatusChange,
   CalendarEventOwnership,
   MeetingBaasWebhookPayload,
   MeetingPlatform,
@@ -49,7 +50,9 @@ export {
 export { createLogger } from './logger';
 export { getApiUrl, getRestApiUrl, restHeaders } from './utils';
 export {
+  WebhookPayloadSchema,
   getApiKeyFingerprint,
-  isValidMeetingBaasPayload,
+  parseWebhookPayload,
   verifyWebhookApiKey,
 } from './webhook-validator';
+export type { ParsedWebhookPayload } from './webhook-validator';
