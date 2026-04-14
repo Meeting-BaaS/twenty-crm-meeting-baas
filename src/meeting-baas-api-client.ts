@@ -74,10 +74,55 @@ export class MeetingBaasApiClient {
       date: data.joined_at || new Date().toISOString(),
       duration,
       transcript: '',
+      transcriptionUrl: data.transcription || undefined,
+      diarizationUrl: data.diarization || undefined,
       mp4Url: data.video || '',
       meetingUrl,
       platform,
       extra: extraData,
     };
+  }
+
+  // Fetch and format transcript from diarization or transcription URL
+  async fetchTranscript(recordingData: RecordingData): Promise<string> {
+    // Prefer diarization (speaker-attributed)
+    const url = recordingData.diarizationUrl || recordingData.transcriptionUrl;
+    if (!url) return '';
+
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        logger.warn(`Failed to fetch transcript: ${response.status}`);
+        return '';
+      }
+
+      const text = await response.text();
+
+      if (recordingData.diarizationUrl) {
+        // Diarization is JSONL: one JSON object per line
+        // Format: {"speaker": "Name", "text": "...", "start": 0.0, "end": 1.0}
+        return text
+          .split('\n')
+          .filter((line) => line.trim())
+          .map((line) => {
+            try {
+              const entry = JSON.parse(line) as Record<string, unknown>;
+              const speaker = (entry.speaker as string) || 'Unknown';
+              const content = (entry.text as string) || '';
+              return `${speaker}: ${content}`;
+            } catch {
+              return '';
+            }
+          })
+          .filter(Boolean)
+          .join('\n');
+      }
+
+      return text;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`Failed to fetch transcript: ${msg}`);
+      return '';
+    }
   }
 }

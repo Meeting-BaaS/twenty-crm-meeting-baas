@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { MeetingBaasApiClient } from '../meeting-baas-api-client';
-import { resolveCalendarEventOwner } from '../twenty-sync-service';
+import { resolveCalendarEventOwner, checkIfRecordingExistsForEvent, upsertRecording } from '../twenty-sync-service';
+import { detectPlatform } from '../twenty-sync-service';
 import { createLogger } from '../logger';
 import { getRestApiUrl, restHeaders } from '../utils';
 
@@ -65,6 +66,13 @@ export const scheduleBot = async (
     return null;
   }
 
+  // Dedup: check if a recording already exists for this calendar event
+  const alreadyExists = await checkIfRecordingExistsForEvent(calendarEventId);
+  if (alreadyExists) {
+    logger.debug(`Recording already exists for calendar event ${calendarEventId}, skipping`);
+    return null;
+  }
+
   // Resolve calendar event owner
   const ownership = await resolveCalendarEventOwner(calendarEventId);
   if (!ownership.workspaceMemberId) {
@@ -104,5 +112,26 @@ export const scheduleBot = async (
   });
 
   logger.debug(`Scheduled bot ${botId} for calendar event ${calendarEventId} (${conferenceUrl})`);
+
+  // Create placeholder recording so subsequent triggers detect the dedup
+  try {
+    await upsertRecording({
+      botId,
+      name: `Scheduled: ${conferenceUrl}`,
+      date: startsAt,
+      duration: 0,
+      platform: detectPlatform(conferenceUrl),
+      status: 'IN_PROGRESS',
+      meetingUrl: { primaryLinkLabel: 'Join Meeting', primaryLinkUrl: conferenceUrl, secondaryLinks: null },
+      mp4Url: null,
+      transcript: '',
+      calendarEventId,
+      workspaceMemberId: ownership.workspaceMemberId,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.warn(`Failed to create placeholder recording: ${msg}`);
+  }
+
   return botId;
 };

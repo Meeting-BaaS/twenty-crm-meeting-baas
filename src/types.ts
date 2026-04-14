@@ -34,6 +34,8 @@ export type RecordingData = {
   date: string;
   duration: number;
   transcript: string;
+  transcriptionUrl?: string;
+  diarizationUrl?: string;
   mp4Url: string;
   meetingUrl: string;
   platform: MeetingPlatform;

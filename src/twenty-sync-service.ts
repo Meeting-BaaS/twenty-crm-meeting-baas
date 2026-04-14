@@ -111,6 +111,23 @@ export const resolveCalendarEventOwner = async (
 
 // --- Recording CRUD ---
 
+export const checkIfRecordingExistsForEvent = async (
+  calendarEventId: string,
+): Promise<boolean> => {
+  try {
+    const response = await axios({
+      method: 'GET',
+      headers: { Authorization: `Bearer ${TWENTY_API_KEY}` },
+      url: `${getRestApiUrl()}/recordings?filter=calendarEventId%5Beq%5D%3A%22${encodeURIComponent(calendarEventId)}%22&limit=1`,
+    });
+    const recordings: Record<string, unknown>[] =
+      response.data?.data?.recordings ?? [];
+    return recordings.length > 0;
+  } catch {
+    return false;
+  }
+};
+
 export const checkIfRecordingExists = async (
   botId: string,
 ): Promise<string | null> => {

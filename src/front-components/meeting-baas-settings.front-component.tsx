@@ -193,7 +193,7 @@ const updateWorkspaceMember = async (
   memberId: string,
   recordingPreference: RecordingPreference,
 ): Promise<void> => {
-  await fetch(`${getApiUrl()}/rest/workspaceMembers/${memberId}`, {
+  const response = await fetch(`${getApiUrl()}/rest/workspaceMembers/${memberId}`, {
     method: 'PATCH',
     headers: {
       Authorization: `Bearer ${getToken()}`,
@@ -201,14 +201,32 @@ const updateWorkspaceMember = async (
     },
     body: JSON.stringify({ recordingPreference }),
   });
+  if (!response.ok) {
+    throw new Error(`Failed to update preference: ${response.status}`);
+  }
 };
 
-const fetchCalendarChannels = async (): Promise<CalendarChannel[]> => {
-  const response = await fetch(`${getApiUrl()}/rest/calendarChannels?limit=1`, {
-    headers: { Authorization: `Bearer ${getToken()}` },
-  });
-  const data = await response.json();
-  return data?.data?.calendarChannels ?? [];
+const fetchUserCalendarChannels = async (memberId: string): Promise<CalendarChannel[]> => {
+  // Get connected accounts owned by this workspace member
+  const accountsResponse = await fetch(
+    `${getApiUrl()}/rest/connectedAccounts?filter=accountOwnerId[eq]:"${memberId}"&limit=10`,
+    { headers: { Authorization: `Bearer ${getToken()}` } },
+  );
+  const accountsData = await accountsResponse.json();
+  const accounts: Array<{ id: string }> = accountsData?.data?.connectedAccounts ?? [];
+  if (accounts.length === 0) return [];
+
+  // Check if any of those accounts have calendar channels
+  for (const account of accounts) {
+    const channelResponse = await fetch(
+      `${getApiUrl()}/rest/calendarChannels?filter=connectedAccountId[eq]:"${account.id}"&limit=1`,
+      { headers: { Authorization: `Bearer ${getToken()}` } },
+    );
+    const channelData = await channelResponse.json();
+    const channels: CalendarChannel[] = channelData?.data?.calendarChannels ?? [];
+    if (channels.length > 0) return channels;
+  }
+  return [];
 };
 
 const checkApiKeyConfigured = async (): Promise<boolean> => {
@@ -236,14 +254,14 @@ const MeetingBaasSettings = () => {
   useEffect(() => {
     Promise.all([
       fetchCurrentWorkspaceMember(),
-      fetchCalendarChannels(),
       checkApiKeyConfigured(),
     ])
-      .then(([memberData, channels, hasApiKey]) => {
+      .then(async ([memberData, hasApiKey]) => {
         setMember(memberData);
         setPreference(memberData.recordingPreference ?? 'RECORD_NONE');
-        setHasCalendar(channels.length > 0);
         setApiKeyConfigured(hasApiKey);
+        const channels = await fetchUserCalendarChannels(memberData.id);
+        setHasCalendar(channels.length > 0);
       })
       .catch(() => {
         // Non-fatal: show defaults

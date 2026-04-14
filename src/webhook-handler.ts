@@ -65,6 +65,13 @@ export class WebhookHandler {
 
       result.durationMinutes = Math.round(recordingData.duration / 60);
 
+      // Fetch transcript from diarization/transcription URL
+      const transcript = await meetingBaasClient.fetchTranscript(recordingData);
+      if (transcript) {
+        recordingData.transcript = transcript;
+        this.logger.debug(`transcript fetched (${transcript.length} chars)`);
+      }
+
       // Generate AI summary from transcript (non-fatal if it fails)
       const summary = await generateSummary(recordingData.transcript);
       if (summary) {
@@ -100,6 +107,12 @@ export class WebhookHandler {
         },
         syncResult,
       );
+
+      if (syncResult.errors.length > 0) {
+        const errMsgs = syncResult.errors.map((e) => `${e.botId}: ${e.error}`);
+        this.logger.error(`sync failed: ${errMsgs.join('; ')}`);
+        throw new Error(`Failed to sync recording: ${errMsgs.join('; ')}`);
+      }
 
       if (recordingId) {
         result.recordingId = recordingId;

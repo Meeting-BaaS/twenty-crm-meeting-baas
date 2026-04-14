@@ -38,6 +38,7 @@ export { generateSummary } from './generate-summary';
 // Sync service
 export {
   checkIfRecordingExists,
+  checkIfRecordingExistsForEvent,
   detectPlatform,
   resolveCalendarEventOwner,
   syncBotRecording,
