@@ -1,8 +1,10 @@
 // SDK entity definitions (discovered automatically by twenty app build)
 export { default as RecordingObject, RECORDING_UNIVERSAL_IDENTIFIER } from './objects/recording';
 
-// Field on standard object
+// Fields on standard objects
 export { default as RecordingPreferenceField } from './fields/recording-preference-on-workspace-member.field';
+export { default as BotNameField } from './fields/bot-name-on-workspace-member.field';
+export { default as BotEntryMessageField } from './fields/bot-entry-message-on-workspace-member.field';
 
 // Front component
 export { default as MeetingBaasSettingsComponent } from './front-components/meeting-baas-settings.front-component';
@@ -15,11 +17,13 @@ export { default as OnCalendarEventUpdated } from './logic-functions/on-calendar
 export { default as BatchScheduleBots } from './logic-functions/batch-schedule-bots';
 
 // Types
+export { WebhookEvent } from './types';
 export type {
   BotWebhookCompleted,
   BotWebhookCompletedData,
   BotWebhookFailed,
   BotWebhookFailedData,
+  BotWebhookStatusChange,
   CalendarEventOwnership,
   MeetingBaasWebhookPayload,
   MeetingPlatform,

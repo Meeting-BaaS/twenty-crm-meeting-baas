@@ -1,7 +1,7 @@
 import { createLogger } from './logger';
 import { generateSummary } from './generate-summary';
 import { MeetingBaasApiClient } from './meeting-baas-api-client';
-import type { ProcessResult, SyncResult } from './types';
+import type { BotWebhookCompletedData, ProcessResult, SyncResult } from './types';
 import {
   getApiKeyFingerprint,
   parseWebhookPayload,
@@ -51,8 +51,13 @@ export class WebhookHandler {
         throw new Error(`Meeting BaaS bot failed: ${failedData.error_message}`);
       }
 
+      if (payload.event === 'bot.status_change') {
+        this.logger.debug(`bot status change: ${JSON.stringify(payload.data)}`);
+        return { success: true };
+      }
+
       // bot.completed — transform, fetch transcript, summarize, sync
-      const completedData = payload.data;
+      const completedData = payload.data as BotWebhookCompletedData;
       const meetingBaasClient = new MeetingBaasApiClient(meetingBaasApiKey);
       const recordingData = meetingBaasClient.transformWebhookData(
         completedData,

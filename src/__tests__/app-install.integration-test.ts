@@ -1,8 +1,8 @@
-import { APPLICATION_UNIVERSAL_IDENTIFIER } from 'src/constants/universal-identifiers';
+import { APPLICATION_UNIVERSAL_IDENTIFIER } from '../constants/universal-identifiers';
 import {
   ensureIntegrationTestEnvironment,
   hasIntegrationTestEnvironment,
-} from 'src/__tests__/setup-test';
+} from './setup-test';
 import { appBuild, appDeploy, appInstall, appUninstall } from 'twenty-sdk/cli';
 import { MetadataApiClient } from 'twenty-client-sdk/metadata';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

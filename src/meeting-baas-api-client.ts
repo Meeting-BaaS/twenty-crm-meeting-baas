@@ -25,6 +25,7 @@ export class MeetingBaasApiClient {
     meetingUrl: string;
     joinAt: string;
     botName?: string;
+    entryMessage?: string;
     recordingMode?: 'speaker_view' | 'gallery_view' | 'audio_only';
     extra?: Record<string, unknown>;
     callbackUrl?: string;
@@ -36,6 +37,8 @@ export class MeetingBaasApiClient {
       meeting_url: options.meetingUrl,
       join_at: options.joinAt,
       bot_name: options.botName || 'Twenty CRM Recorder',
+      transcription_enabled: true,
+      ...(options.entryMessage && { entry_message: options.entryMessage }),
       ...(options.recordingMode && { recording_mode: options.recordingMode }),
       ...(options.extra && { extra: options.extra }),
       ...(options.callbackUrl && {

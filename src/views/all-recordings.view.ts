@@ -1,5 +1,5 @@
 import { defineView } from 'twenty-sdk';
-import { ViewType } from 'twenty-shared/types';
+import { ViewKey, ViewType } from 'twenty-shared/types';
 import {
   RECORDING_UNIVERSAL_IDENTIFIER,
   NAME_FIELD_ID,
@@ -18,7 +18,7 @@ export default defineView({
   name: 'All Recordings',
   objectUniversalIdentifier: RECORDING_UNIVERSAL_IDENTIFIER,
   type: ViewType.TABLE,
-  key: 'INDEX',
+  key: ViewKey.INDEX,
   icon: 'IconVideo',
   position: 0,
   fields: [

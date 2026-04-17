@@ -5,11 +5,18 @@ export type BotWebhookCompleted = V2.BotWebhookCompleted;
 export type BotWebhookCompletedData = V2.BotWebhookCompletedData;
 export type BotWebhookFailed = V2.BotWebhookFailed;
 export type BotWebhookFailedData = V2.BotWebhookFailedData;
+export type BotWebhookStatusChange = V2.BotWebhookStatusChange;
 
-// V2 callbacks only send bot.completed and bot.failed (no status_change)
 export type MeetingBaasWebhookPayload =
   | BotWebhookCompleted
-  | BotWebhookFailed;
+  | BotWebhookFailed
+  | BotWebhookStatusChange;
+
+export const WebhookEvent = {
+  COMPLETED: 'bot.completed' as BotWebhookCompleted['event'],
+  FAILED: 'bot.failed' as BotWebhookFailed['event'],
+  STATUS_CHANGE: 'bot.status_change' as BotWebhookStatusChange['event'],
+} as const;
 
 // Meeting platform types
 export type MeetingPlatform =

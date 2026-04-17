@@ -65,7 +65,8 @@ const resolveViaChannelChain = async (
     { headers: authHeaders() },
   );
 
-  const channelData = channelResponse.data?.data ?? channelResponse.data;
+  const channelBody = channelResponse.data?.data ?? channelResponse.data;
+  const channelData = (channelBody as Record<string, unknown>)?.calendarChannel ?? channelBody;
   const connectedAccountId = (channelData as Record<string, unknown>)?.connectedAccountId as string | undefined;
   if (!connectedAccountId) return null;
 
@@ -75,7 +76,8 @@ const resolveViaChannelChain = async (
     { headers: authHeaders() },
   );
 
-  const accountData = accountResponse.data?.data ?? accountResponse.data;
+  const accountBody = accountResponse.data?.data ?? accountResponse.data;
+  const accountData = (accountBody as Record<string, unknown>)?.connectedAccount ?? accountBody;
   const workspaceMemberId = (accountData as Record<string, unknown>)?.accountOwnerId as string | undefined;
   if (!workspaceMemberId) return null;
 
@@ -134,7 +136,8 @@ export const resolveCalendarEventOwner = async (
         `${getRestApiUrl()}/workspaceMembers/${result.workspaceMemberId}`,
         { headers: authHeaders() },
       );
-      const memberData = memberResponse.data?.data ?? memberResponse.data;
+      const memberBody = memberResponse.data?.data ?? memberResponse.data;
+      const memberData = (memberBody as Record<string, unknown>)?.workspaceMember ?? memberBody;
       const name = (memberData as Record<string, unknown>)?.name as { firstName?: string; lastName?: string } | undefined;
       const fullName = [name?.firstName, name?.lastName].filter(Boolean).join(' ');
       if (fullName) result.workspaceMemberName = fullName;

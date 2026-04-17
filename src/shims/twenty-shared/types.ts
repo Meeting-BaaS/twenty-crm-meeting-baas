@@ -10,6 +10,10 @@ export enum ViewType {
   FIELDS_WIDGET = 'FIELDS_WIDGET',
 }
 
+export enum ViewKey {
+  INDEX = 'INDEX',
+}
+
 export enum ViewFilterOperand {
   IS = 'IS',
   IS_NOT_NULL = 'IS_NOT_NULL',

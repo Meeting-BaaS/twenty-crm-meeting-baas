@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { z } from 'zod';
 
 // V2 webhook event types
-const WebhookEventSchema = z.enum(['bot.completed', 'bot.failed']);
+const WebhookEventSchema = z.enum(['bot.completed', 'bot.failed', 'bot.status_change']);
 
 // bot.completed payload
 const CompletedDataSchema = z.object({
@@ -34,10 +34,23 @@ const FailedPayloadSchema = z.object({
   extra: z.record(z.string(), z.unknown()).optional().nullable(),
 });
 
+// bot.status_change payload
+const StatusChangeDataSchema = z.object({
+  bot_id: z.string().min(1),
+  status: z.string().optional(),
+});
+
+const StatusChangePayloadSchema = z.object({
+  event: z.literal('bot.status_change'),
+  data: StatusChangeDataSchema,
+  extra: z.record(z.string(), z.unknown()).optional().nullable(),
+});
+
 // Union of all V2 webhook payloads
 export const WebhookPayloadSchema = z.discriminatedUnion('event', [
   CompletedPayloadSchema,
   FailedPayloadSchema,
+  StatusChangePayloadSchema,
 ]);
 
 export type ParsedWebhookPayload = z.infer<typeof WebhookPayloadSchema>;
