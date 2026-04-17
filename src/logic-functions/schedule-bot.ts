@@ -81,6 +81,10 @@ const isOrganizer = async (
     const participants: Record<string, unknown>[] =
       response.data?.data?.calendarEventParticipants ?? [];
 
+    // Solo events (no invitees) have 0 participant records in Google Calendar API.
+    // If the event is on this member's calendar with no participants, they created it.
+    if (participants.length === 0) return true;
+
     return participants.some(
       (p) =>
         p.isOrganizer === true &&

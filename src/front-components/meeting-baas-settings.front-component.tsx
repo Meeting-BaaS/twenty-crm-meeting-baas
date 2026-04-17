@@ -231,7 +231,7 @@ const PREFERENCE_OPTIONS: Array<{
   },
   {
     value: 'RECORD_ORGANIZED',
-    title: 'Organizer only',
+    title: 'Record my meetings',
     description: 'Only record meetings you organized',
   },
   {

@@ -5,7 +5,7 @@ export type RecordingPreference =
 
 export const RECORDING_PREFERENCE_VARIABLE_KEY = 'RECORDING_PREFERENCE';
 export const DEFAULT_WORKSPACE_RECORDING_PREFERENCE: RecordingPreference =
-  'RECORD_ALL';
+  'RECORD_ORGANIZED';
 
 export const parseRecordingPreference = (
   value: unknown,
