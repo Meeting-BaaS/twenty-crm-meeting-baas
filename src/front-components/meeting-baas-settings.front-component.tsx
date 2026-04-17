@@ -288,6 +288,8 @@ const fetchUserCalendarChannels = async (_memberId: string): Promise<CalendarCha
   return data?.data?.myCalendarChannels ?? [];
 };
 
+const SECRET_VARIABLE_MASK = '********';
+
 const checkApiKeyConfigured = async (): Promise<boolean> => {
   try {
     const response = await fetch(`${getApiUrl()}/metadata`, {
@@ -307,8 +309,10 @@ const checkApiKeyConfigured = async (): Promise<boolean> => {
       const apiKeyVar = vars.find(
         (v: { key: string }) => v.key === 'MEETING_BAAS_API_KEY',
       );
-      if (apiKeyVar && apiKeyVar.value !== '') {
-        return true;
+      if (apiKeyVar) {
+        // An empty secret returns exactly '********', a real value returns
+        // a prefix + mask (e.g. '5z********'). So !== mask means configured.
+        return apiKeyVar.value !== SECRET_VARIABLE_MASK;
       }
     }
     return false;
@@ -372,7 +376,12 @@ const MeetingBaasSettings = () => {
         body: JSON.stringify({}),
       });
       const data = await response.json();
-      setBatchResult(data as BatchScheduleResult);
+      setBatchResult({
+        scheduled: data.scheduled ?? 0,
+        skipped: data.skipped ?? 0,
+        errors: data.errors ?? [],
+        hasMore: data.hasMore ?? false,
+      });
     } catch {
       setBatchResult({ scheduled: 0, skipped: 0, errors: ['Request failed'], hasMore: false });
     } finally {
@@ -473,7 +482,7 @@ const MeetingBaasSettings = () => {
             {isBatchScheduling ? 'Scheduling...' : 'Schedule existing meetings'}
           </StyledButton>
 
-          {batchResult && batchResult.errors.length === 0 && (
+          {batchResult && (batchResult.errors?.length ?? 0) === 0 && (
             <StyledResultBanner variant="success" style={{ marginTop: 12 }}>
               {batchResult.scheduled > 0
                 ? `Scheduled bots for ${batchResult.scheduled} meeting${batchResult.scheduled !== 1 ? 's' : ''} (${batchResult.skipped} skipped)`
@@ -482,7 +491,7 @@ const MeetingBaasSettings = () => {
             </StyledResultBanner>
           )}
 
-          {batchResult && batchResult.errors.length > 0 && (
+          {batchResult && (batchResult.errors?.length ?? 0) > 0 && (
             <StyledResultBanner variant="error" style={{ marginTop: 12 }}>
               {batchResult.scheduled > 0
                 ? `Scheduled ${batchResult.scheduled}, but ${batchResult.errors.length} error${batchResult.errors.length !== 1 ? 's' : ''} occurred`

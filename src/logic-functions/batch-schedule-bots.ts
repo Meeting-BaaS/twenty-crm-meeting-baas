@@ -19,9 +19,15 @@ const MAX_EVENTS_PER_RUN = 200;
 // SDK batch endpoint supports up to 100 items
 const BATCH_SIZE = 100;
 
+type ConferenceLink = {
+  primaryLinkUrl?: string;
+  primaryLinkLabel?: string;
+  secondaryLinks?: unknown[];
+};
+
 type CalendarEvent = {
   id: string;
-  conferenceLink?: string;
+  conferenceUrl?: string;
   startsAt?: string;
   title?: string;
 };
@@ -84,18 +90,26 @@ const fetchFutureCalendarEvents = async (
       cursor,
     });
 
-    const response = await axios.get(url, { headers: restHeaders() });
-    const page: Record<string, unknown>[] =
-      response.data?.data?.calendarEvents ?? [];
+    let page: Record<string, unknown>[];
+    try {
+      const response = await axios.get(url, { headers: restHeaders() });
+      page = response.data?.data?.calendarEvents ?? [];
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response) {
+        logger.error(`REST API error ${error.response.status}: ${JSON.stringify(error.response.data)}`);
+      }
+      throw error;
+    }
 
     if (page.length === 0) break;
 
     for (const event of page) {
-      const conferenceLink = event.conferenceLink as string | undefined;
-      if (conferenceLink) {
+      const conferenceLink = event.conferenceLink as ConferenceLink | undefined;
+      const conferenceUrl = conferenceLink?.primaryLinkUrl;
+      if (conferenceUrl) {
         events.push({
           id: event.id as string,
-          conferenceLink,
+          conferenceUrl,
           startsAt: event.startsAt as string | undefined,
           title: event.title as string | undefined,
         });
@@ -201,12 +215,12 @@ export default defineLogicFunction({
       const batch = qualified.slice(i, i + BATCH_SIZE);
 
       const items = batch.map((event) => ({
-        meetingUrl: event.conferenceLink!,
+        meetingUrl: event.conferenceUrl!,
         joinAt: event.startsAt!,
         extra: {
           calendarEventId: event.id,
           workspaceMemberId: event.workspaceMemberId,
-          meeting_url: event.conferenceLink,
+          meeting_url: event.conferenceUrl,
         },
         callbackUrl,
         callbackSecret: apiKey,
@@ -221,12 +235,12 @@ export default defineLogicFunction({
           try {
             await upsertRecording({
               botId: botIds[j],
-              name: event.title ? `Scheduled: ${event.title}` : `Scheduled: ${event.conferenceLink}`,
+              name: event.title ? `Scheduled: ${event.title}` : `Scheduled: ${event.conferenceUrl}`,
               date: event.startsAt!,
               duration: 0,
-              platform: detectPlatform(event.conferenceLink!),
+              platform: detectPlatform(event.conferenceUrl!),
               status: 'IN_PROGRESS',
-              meetingUrl: { primaryLinkLabel: 'Join Meeting', primaryLinkUrl: event.conferenceLink!, secondaryLinks: null },
+              meetingUrl: { primaryLinkLabel: 'Join Meeting', primaryLinkUrl: event.conferenceUrl!, secondaryLinks: null },
               mp4Url: null,
               transcript: '',
               calendarEventId: event.id,
