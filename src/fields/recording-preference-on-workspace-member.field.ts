@@ -12,10 +12,10 @@ export default defineField({
     STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.workspaceMember.universalIdentifier,
   type: FieldType.SELECT,
   name: 'recordingPreference',
-  label: 'Recording Preference',
+  label: 'Recording Preference Override',
   icon: 'IconVideo',
-  description: 'Controls automatic meeting recording behavior for this workspace member',
-  defaultValue: "'RECORD_NONE'",
+  description:
+    'Optional override for this workspace member; when empty, the workspace default recording preference applies',
   options: [
     {
       id: 'e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b',

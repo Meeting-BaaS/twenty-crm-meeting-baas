@@ -6,6 +6,10 @@ import {
   APPLICATION_UNIVERSAL_IDENTIFIER,
   DEFAULT_ROLE_UNIVERSAL_IDENTIFIER,
 } from './constants/universal-identifiers';
+import {
+  DEFAULT_WORKSPACE_RECORDING_PREFERENCE,
+  RECORDING_PREFERENCE_VARIABLE_KEY,
+} from './recording-preferences';
 
 export default defineApplication({
   universalIdentifier: APPLICATION_UNIVERSAL_IDENTIFIER,
@@ -20,6 +24,12 @@ export default defineApplication({
       description: 'Meeting BaaS API key for authenticating requests and verifying webhooks',
       isSecret: true,
       value: '',
+    },
+    [RECORDING_PREFERENCE_VARIABLE_KEY]: {
+      universalIdentifier: '9d5ed4a0-4624-4f55-8e3b-349b7714c64c',
+      description:
+        'Workspace default for automatic recording when a member has no explicit override',
+      value: DEFAULT_WORKSPACE_RECORDING_PREFERENCE,
     },
     AUTO_CREATE_CONTACTS: {
       universalIdentifier: '9637bafd-5888-4f34-bf8f-a4c82dbc4942',

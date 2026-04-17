@@ -3,16 +3,19 @@ import { MeetingBaasApiClient } from '../meeting-baas-api-client';
 import { resolveCalendarEventOwner, checkIfRecordingExistsForEvent, upsertRecording } from '../twenty-sync-service';
 import { detectPlatform } from '../twenty-sync-service';
 import { createLogger } from '../logger';
+import {
+  type RecordingPreference,
+  resolveEffectiveRecordingPreference,
+} from '../recording-preferences';
 import { buildRestUrl, restHeaders } from '../utils';
 
 const logger = createLogger('schedule-bot');
 
-type RecordingPreference = 'RECORD_ALL' | 'RECORD_ORGANIZED' | 'RECORD_NONE';
-
 type BotSettings = {
-  preference: RecordingPreference;
+  preferenceOverride: RecordingPreference | null;
   botName: string;
   botEntryMessage: string;
+  isAvailable: boolean;
 };
 
 const fetchWorkspaceMemberBotSettings = async (
@@ -27,14 +30,21 @@ const fetchWorkspaceMemberBotSettings = async (
     const body = response.data?.data ?? response.data;
     const memberData = body?.workspaceMember ?? body;
     return {
-      preference: (memberData?.recordingPreference as RecordingPreference) ?? 'RECORD_NONE',
+      preferenceOverride:
+        (memberData?.recordingPreference as RecordingPreference | null) ?? null,
       botName: (memberData?.botName as string) || 'Twenty CRM Recorder',
       botEntryMessage: (memberData?.botEntryMessage as string) || '',
+      isAvailable: true,
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.warn(`Failed to fetch workspace member bot settings: ${msg}`);
-    return { preference: 'RECORD_NONE', botName: 'Twenty CRM Recorder', botEntryMessage: '' };
+    return {
+      preferenceOverride: null,
+      botName: 'Twenty CRM Recorder',
+      botEntryMessage: '',
+      isAvailable: false,
+    };
   }
 };
 
@@ -90,6 +100,7 @@ export const scheduleBot = async (
   startsAt: string,
 ): Promise<string | null> => {
   const apiKey = process.env.MEETING_BAAS_API_KEY;
+  const workspacePreference = process.env.RECORDING_PREFERENCE;
   if (!apiKey) {
     logger.debug('MEETING_BAAS_API_KEY not set, skipping bot scheduling');
     return null;
@@ -110,7 +121,18 @@ export const scheduleBot = async (
   }
 
   // Check recording preference and bot settings
-  const { preference, botName, botEntryMessage } = await fetchWorkspaceMemberBotSettings(ownership.workspaceMemberId);
+  const {
+    preferenceOverride,
+    botName,
+    botEntryMessage,
+    isAvailable,
+  } = await fetchWorkspaceMemberBotSettings(ownership.workspaceMemberId);
+  const preference = isAvailable
+    ? resolveEffectiveRecordingPreference(
+        preferenceOverride,
+        workspacePreference as RecordingPreference | null | undefined,
+      )
+    : 'RECORD_NONE';
   if (preference === 'RECORD_NONE') {
     logger.debug(`Workspace member ${ownership.workspaceMemberName ?? ownership.workspaceMemberId} has recording disabled`);
     return null;

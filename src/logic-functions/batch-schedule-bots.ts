@@ -8,11 +8,13 @@ import {
   detectPlatform,
 } from '../twenty-sync-service';
 import { createLogger } from '../logger';
+import {
+  type RecordingPreference,
+  resolveEffectiveRecordingPreference,
+} from '../recording-preferences';
 import { buildRestUrl, restHeaders } from '../utils';
 
 const logger = createLogger('batch-schedule-bots');
-
-type RecordingPreference = 'RECORD_ALL' | 'RECORD_ORGANIZED' | 'RECORD_NONE';
 
 // Max events to inspect per invocation (logic function has a 60s timeout)
 const MAX_EVENTS_PER_RUN = 200;
@@ -41,7 +43,7 @@ type BatchResult = {
 
 const fetchWorkspaceMemberPreference = async (
   workspaceMemberId: string,
-): Promise<RecordingPreference> => {
+): Promise<RecordingPreference | null | undefined> => {
   try {
     const response = await axios.get(
       buildRestUrl(`workspaceMembers/${workspaceMemberId}`),
@@ -49,9 +51,9 @@ const fetchWorkspaceMemberPreference = async (
     );
     const body = response.data?.data ?? response.data;
     const memberData = body?.workspaceMember ?? body;
-    return (memberData?.recordingPreference as RecordingPreference) ?? 'RECORD_NONE';
+    return (memberData?.recordingPreference as RecordingPreference | null) ?? null;
   } catch {
-    return 'RECORD_NONE';
+    return undefined;
   }
 };
 
@@ -142,6 +144,7 @@ export default defineLogicFunction({
     const result: BatchResult = { scheduled: 0, skipped: 0, errors: [], hasMore: false };
 
     const apiKey = process.env.MEETING_BAAS_API_KEY;
+    const workspacePreference = process.env.RECORDING_PREFERENCE;
     if (!apiKey) {
       result.errors.push('MEETING_BAAS_API_KEY not configured');
       return result;
@@ -185,7 +188,16 @@ export default defineLogicFunction({
       // Check preference (cached per workspace member)
       let preference = preferenceCache.get(ownership.workspaceMemberId);
       if (preference === undefined) {
-        preference = await fetchWorkspaceMemberPreference(ownership.workspaceMemberId);
+        const preferenceOverride = await fetchWorkspaceMemberPreference(
+          ownership.workspaceMemberId,
+        );
+        preference =
+          preferenceOverride === undefined
+            ? 'RECORD_NONE'
+            : resolveEffectiveRecordingPreference(
+                preferenceOverride,
+                workspacePreference as RecordingPreference | null | undefined,
+              );
         preferenceCache.set(ownership.workspaceMemberId, preference);
       }
 

@@ -1,12 +1,19 @@
 import styled from '@emotion/styled';
 import { useEffect, useState } from 'react';
 import { defineFrontComponent } from 'twenty-sdk';
+import { APPLICATION_UNIVERSAL_IDENTIFIER } from '../constants/universal-identifiers';
+import {
+  DEFAULT_WORKSPACE_RECORDING_PREFERENCE,
+  RECORDING_PREFERENCE_VARIABLE_KEY,
+  type RecordingPreference,
+  resolveEffectiveRecordingPreference,
+} from '../recording-preferences';
 
-type RecordingPreference = 'RECORD_ALL' | 'RECORD_ORGANIZED' | 'RECORD_NONE';
+type PreferenceSelection = RecordingPreference | 'WORKSPACE_DEFAULT';
 
 type WorkspaceMember = {
   id: string;
-  recordingPreference?: RecordingPreference;
+  recordingPreference?: RecordingPreference | null;
 };
 
 type CalendarChannel = {
@@ -208,10 +215,15 @@ type BatchScheduleResult = {
 };
 
 const PREFERENCE_OPTIONS: Array<{
-  value: RecordingPreference;
+  value: PreferenceSelection;
   title: string;
   description: string;
 }> = [
+  {
+    value: 'WORKSPACE_DEFAULT',
+    title: 'Use workspace default',
+    description: 'Follow the admin-configured default for this workspace',
+  },
   {
     value: 'RECORD_ALL',
     title: 'Record all meetings',
@@ -255,9 +267,50 @@ const fetchCurrentWorkspaceMember = async (): Promise<WorkspaceMember> => {
   return { id: memberId, recordingPreference: member?.recordingPreference };
 };
 
+const SECRET_VARIABLE_MASK = '********';
+
+const fetchWorkspaceAppSettings = async (): Promise<{
+  apiKeyConfigured: boolean;
+  workspacePreference: RecordingPreference;
+}> => {
+  const response = await fetch(`${getApiUrl()}/metadata`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query:
+        '{ findManyApplications { universalIdentifier applicationVariables { key value isSecret } } }',
+    }),
+  });
+  const data = await response.json();
+  const apps = data?.data?.findManyApplications ?? [];
+  const app = apps.find(
+    (entry: { universalIdentifier?: string }) =>
+      entry.universalIdentifier === APPLICATION_UNIVERSAL_IDENTIFIER,
+  );
+  const vars = app?.applicationVariables ?? [];
+  const apiKeyVar = vars.find(
+    (v: { key: string }) => v.key === 'MEETING_BAAS_API_KEY',
+  );
+  const workspacePreferenceVar = vars.find(
+    (v: { key: string }) => v.key === RECORDING_PREFERENCE_VARIABLE_KEY,
+  );
+
+  return {
+    apiKeyConfigured:
+      !!apiKeyVar && apiKeyVar.value !== SECRET_VARIABLE_MASK,
+    workspacePreference: resolveEffectiveRecordingPreference(
+      null,
+      workspacePreferenceVar?.value,
+    ),
+  };
+};
+
 const updateWorkspaceMember = async (
   memberId: string,
-  recordingPreference: RecordingPreference,
+  recordingPreference: RecordingPreference | null,
 ): Promise<void> => {
   const response = await fetch(`${getApiUrl()}/rest/workspaceMembers/${memberId}`, {
     method: 'PATCH',
@@ -288,42 +341,13 @@ const fetchUserCalendarChannels = async (_memberId: string): Promise<CalendarCha
   return data?.data?.myCalendarChannels ?? [];
 };
 
-const SECRET_VARIABLE_MASK = '********';
-
-const checkApiKeyConfigured = async (): Promise<boolean> => {
-  try {
-    const response = await fetch(`${getApiUrl()}/metadata`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${getToken()}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        query: `{ findManyApplications { name applicationVariables { key value isSecret } } }`,
-      }),
-    });
-    const data = await response.json();
-    const apps = data?.data?.findManyApplications ?? [];
-    for (const app of apps) {
-      const vars = app.applicationVariables ?? [];
-      const apiKeyVar = vars.find(
-        (v: { key: string }) => v.key === 'MEETING_BAAS_API_KEY',
-      );
-      if (apiKeyVar) {
-        // An empty secret returns exactly '********', a real value returns
-        // a prefix + mask (e.g. '5z********'). So !== mask means configured.
-        return apiKeyVar.value !== SECRET_VARIABLE_MASK;
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
-};
-
 const MeetingBaasSettings = () => {
   const [member, setMember] = useState<WorkspaceMember | null>(null);
-  const [preference, setPreference] = useState<RecordingPreference>('RECORD_NONE');
+  const [preference, setPreference] =
+    useState<PreferenceSelection>('WORKSPACE_DEFAULT');
+  const [workspacePreference, setWorkspacePreference] = useState<RecordingPreference>(
+    DEFAULT_WORKSPACE_RECORDING_PREFERENCE,
+  );
   const [hasCalendar, setHasCalendar] = useState<boolean | null>(null);
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -334,12 +358,13 @@ const MeetingBaasSettings = () => {
   useEffect(() => {
     Promise.all([
       fetchCurrentWorkspaceMember(),
-      checkApiKeyConfigured(),
+      fetchWorkspaceAppSettings(),
     ])
-      .then(async ([memberData, hasApiKey]) => {
+      .then(async ([memberData, appSettings]) => {
         setMember(memberData);
-        setPreference(memberData.recordingPreference ?? 'RECORD_NONE');
-        setApiKeyConfigured(hasApiKey);
+        setPreference(memberData.recordingPreference ?? 'WORKSPACE_DEFAULT');
+        setWorkspacePreference(appSettings.workspacePreference);
+        setApiKeyConfigured(appSettings.apiKeyConfigured);
         const channels = await fetchUserCalendarChannels(memberData.id);
         setHasCalendar(channels.length > 0);
       })
@@ -349,14 +374,17 @@ const MeetingBaasSettings = () => {
       .finally(() => setIsLoading(false));
   }, []);
 
-  const handlePreferenceChange = async (newPreference: RecordingPreference) => {
+  const handlePreferenceChange = async (newPreference: PreferenceSelection) => {
     if (!member || isSaving) return;
     setIsSaving(true);
     setPreference(newPreference);
     try {
-      await updateWorkspaceMember(member.id, newPreference);
+      const recordingPreference =
+        newPreference === 'WORKSPACE_DEFAULT' ? null : newPreference;
+      await updateWorkspaceMember(member.id, recordingPreference);
+      setMember({ ...member, recordingPreference });
     } catch {
-      setPreference(member.recordingPreference ?? 'RECORD_NONE');
+      setPreference(member.recordingPreference ?? 'WORKSPACE_DEFAULT');
     } finally {
       setIsSaving(false);
     }
@@ -389,7 +417,12 @@ const MeetingBaasSettings = () => {
     }
   };
 
-  const showBatchButton = preference !== 'RECORD_NONE' && apiKeyConfigured && hasCalendar;
+  const effectivePreference = resolveEffectiveRecordingPreference(
+    member?.recordingPreference ?? null,
+    workspacePreference,
+  );
+  const showBatchButton =
+    effectivePreference !== 'RECORD_NONE' && apiKeyConfigured && hasCalendar;
 
   if (isLoading) {
     return (
@@ -438,7 +471,7 @@ const MeetingBaasSettings = () => {
       <div>
         <StyledSectionTitle>Recording Preference</StyledSectionTitle>
         <StyledSectionSubtitle>
-          Choose which meetings are automatically recorded when they have a conference link
+          Admins set the workspace default in Variables. Your setting can override it when needed.
         </StyledSectionSubtitle>
         <StyledRadioGroup>
           {PREFERENCE_OPTIONS.map((option) => (
@@ -460,7 +493,28 @@ const MeetingBaasSettings = () => {
         </StyledRadioGroup>
       </div>
 
-      {preference !== 'RECORD_NONE' && !apiKeyConfigured && (
+      <StyledBanner variant="info">
+        Effective recording mode:{' '}
+        {effectivePreference === 'RECORD_ALL'
+          ? 'Record all meetings'
+          : effectivePreference === 'RECORD_ORGANIZED'
+            ? 'Organizer only'
+            : 'Do not record'}
+        {preference === 'WORKSPACE_DEFAULT' && ' (from workspace default)'}
+      </StyledBanner>
+
+      {preference === 'WORKSPACE_DEFAULT' && (
+        <StyledBanner variant="info">
+          Workspace default:{' '}
+          {workspacePreference === 'RECORD_ALL'
+            ? 'Record all meetings'
+            : workspacePreference === 'RECORD_ORGANIZED'
+              ? 'Organizer only'
+              : 'Do not record'}
+        </StyledBanner>
+      )}
+
+      {effectivePreference !== 'RECORD_NONE' && !apiKeyConfigured && (
         <StyledBanner variant="info">
           Recording is enabled but no API key is set. Set MEETING_BAAS_API_KEY in the Variables tab
           to start recording.
