@@ -35,9 +35,71 @@ export const detectPlatform = (meetingUrl: string): MeetingPlatform => {
 };
 
 // --- Calendar event ownership resolution ---
-// Walk CalendarEvent -> CalendarChannelEventAssociation -> CalendarChannel -> ConnectedAccount -> WorkspaceMember
+// Primary: CalendarEvent -> CalendarChannelEventAssociation -> CalendarChannel -> ConnectedAccount -> WorkspaceMember
+// Fallback: CalendarEventParticipant with workspaceMemberId
 
 const ownershipCache = new Map<string, CalendarEventOwnership>();
+
+const resolveViaChannelChain = async (
+  calendarEventId: string,
+): Promise<CalendarEventOwnership | null> => {
+  // 1. CalendarEvent -> CalendarChannelEventAssociation -> calendarChannelId
+  const assocUrl = buildRestUrl('calendarChannelEventAssociations', {
+    filter: { calendarEventId: { eq: calendarEventId } },
+    limit: 1,
+  });
+  const assocResponse = await axios.get<TwentyListResponse<'calendarChannelEventAssociations'>>(
+    assocUrl,
+    { headers: authHeaders() },
+  );
+
+  const associations = assocResponse.data?.data?.calendarChannelEventAssociations ?? [];
+  if (associations.length === 0) return null;
+
+  const calendarChannelId = associations[0].calendarChannelId as string | undefined;
+  if (!calendarChannelId) return null;
+
+  // 2. CalendarChannel -> connectedAccountId
+  const channelResponse = await axios.get<TwentyDetailResponse>(
+    `${getRestApiUrl()}/calendarChannels/${calendarChannelId}`,
+    { headers: authHeaders() },
+  );
+
+  const channelData = channelResponse.data?.data ?? channelResponse.data;
+  const connectedAccountId = (channelData as Record<string, unknown>)?.connectedAccountId as string | undefined;
+  if (!connectedAccountId) return null;
+
+  // 3. ConnectedAccount -> accountOwnerId (= workspaceMemberId)
+  const accountResponse = await axios.get<TwentyDetailResponse>(
+    `${getRestApiUrl()}/connectedAccounts/${connectedAccountId}`,
+    { headers: authHeaders() },
+  );
+
+  const accountData = accountResponse.data?.data ?? accountResponse.data;
+  const workspaceMemberId = (accountData as Record<string, unknown>)?.accountOwnerId as string | undefined;
+  if (!workspaceMemberId) return null;
+
+  return { workspaceMemberId };
+};
+
+const resolveViaParticipants = async (
+  calendarEventId: string,
+): Promise<CalendarEventOwnership | null> => {
+  const url = buildRestUrl('calendarEventParticipants', {
+    filter: { calendarEventId: { eq: calendarEventId } },
+    limit: 10,
+  });
+  const response = await axios.get<TwentyListResponse<'calendarEventParticipants'>>(
+    url,
+    { headers: authHeaders() },
+  );
+  const participants = response.data?.data?.calendarEventParticipants ?? [];
+  for (const p of participants) {
+    const wmId = p.workspaceMemberId as string | undefined;
+    if (wmId) return { workspaceMemberId: wmId };
+  }
+  return null;
+};
 
 export const resolveCalendarEventOwner = async (
   calendarEventId: string,
@@ -45,75 +107,40 @@ export const resolveCalendarEventOwner = async (
   const cached = ownershipCache.get(calendarEventId);
   if (cached) return cached;
 
-  const result: CalendarEventOwnership = {};
+  let result: CalendarEventOwnership = {};
 
+  // Try primary chain: association -> channel -> account -> member
   try {
-    // 1. CalendarEvent -> CalendarChannelEventAssociation -> calendarChannelId
-    const assocUrl = buildRestUrl('calendarChannelEventAssociations', {
-      filter: { calendarEventId: { eq: calendarEventId } },
-      limit: 1,
-    });
-    const assocResponse = await axios.get<TwentyListResponse<'calendarChannelEventAssociations'>>(
-      assocUrl,
-      { headers: authHeaders() },
-    );
+    const primary = await resolveViaChannelChain(calendarEventId);
+    if (primary?.workspaceMemberId) result = primary;
+  } catch {
+    // Chain broken (404 on channel/account), fall through
+  }
 
-    const associations = assocResponse.data?.data?.calendarChannelEventAssociations ?? [];
-    if (associations.length === 0) {
-      ownershipCache.set(calendarEventId, result);
-      return result;
+  // Fallback 1: participant with workspaceMemberId
+  if (!result.workspaceMemberId) {
+    try {
+      const participant = await resolveViaParticipants(calendarEventId);
+      if (participant?.workspaceMemberId) result = participant;
+    } catch {
+      // fall through
     }
+  }
 
-    const calendarChannelId = associations[0].calendarChannelId as string | undefined;
-    if (!calendarChannelId) {
-      ownershipCache.set(calendarEventId, result);
-      return result;
-    }
-
-    // 2. CalendarChannel -> connectedAccountId
-    const channelResponse = await axios.get<TwentyDetailResponse>(
-      `${getRestApiUrl()}/calendarChannels/${calendarChannelId}`,
-      { headers: authHeaders() },
-    );
-
-    const channelData = channelResponse.data?.data ?? channelResponse.data;
-    const connectedAccountId = (channelData as Record<string, unknown>)?.connectedAccountId as string | undefined;
-    if (!connectedAccountId) {
-      ownershipCache.set(calendarEventId, result);
-      return result;
-    }
-
-    // 3. ConnectedAccount -> accountOwnerId (= workspaceMemberId)
-    const accountResponse = await axios.get<TwentyDetailResponse>(
-      `${getRestApiUrl()}/connectedAccounts/${connectedAccountId}`,
-      { headers: authHeaders() },
-    );
-
-    const accountData = accountResponse.data?.data ?? accountResponse.data;
-    const workspaceMemberId = (accountData as Record<string, unknown>)?.accountOwnerId as string | undefined;
-    if (!workspaceMemberId) {
-      ownershipCache.set(calendarEventId, result);
-      return result;
-    }
-    result.workspaceMemberId = workspaceMemberId;
-
-    // 4. WorkspaceMember -> display name
+  // Resolve display name if we have a workspaceMemberId but no name
+  if (result.workspaceMemberId && !result.workspaceMemberName) {
     try {
       const memberResponse = await axios.get<TwentyDetailResponse>(
-        `${getRestApiUrl()}/workspaceMembers/${workspaceMemberId}`,
+        `${getRestApiUrl()}/workspaceMembers/${result.workspaceMemberId}`,
         { headers: authHeaders() },
       );
-
       const memberData = memberResponse.data?.data ?? memberResponse.data;
       const name = (memberData as Record<string, unknown>)?.name as { firstName?: string; lastName?: string } | undefined;
       const fullName = [name?.firstName, name?.lastName].filter(Boolean).join(' ');
       if (fullName) result.workspaceMemberName = fullName;
     } catch {
-      // Non-fatal: we still have the workspaceMemberId
+      // Non-fatal
     }
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.warn(`Ownership resolution failed for calendarEvent ${calendarEventId}: ${msg}`);
   }
 
   ownershipCache.set(calendarEventId, result);

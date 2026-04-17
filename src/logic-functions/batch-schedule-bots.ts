@@ -47,7 +47,8 @@ const fetchWorkspaceMemberPreference = async (
       buildRestUrl(`workspaceMembers/${workspaceMemberId}`),
       { headers: restHeaders() },
     );
-    const memberData = response.data?.data ?? response.data;
+    const body = response.data?.data ?? response.data;
+    const memberData = body?.workspaceMember ?? body;
     return (memberData?.recordingPreference as RecordingPreference) ?? 'RECORD_NONE';
   } catch {
     return 'RECORD_NONE';
