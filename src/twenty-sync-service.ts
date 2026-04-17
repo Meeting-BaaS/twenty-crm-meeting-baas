@@ -36,14 +36,18 @@ export const detectPlatform = (meetingUrl: string): MeetingPlatform => {
 
 // --- Calendar event ownership resolution ---
 // Primary: CalendarEvent -> CalendarChannelEventAssociation -> CalendarChannel -> ConnectedAccount -> WorkspaceMember
-// Fallback: CalendarEventParticipant with workspaceMemberId
+// Channel-sibling: same calendarChannelId -> sibling event participants with resolved workspaceMemberId
+//   (workaround for Twenty 1.21+ where calendarChannel/connectedAccount moved to core schema
+//    and are no longer queryable via workspace REST API)
+// Fallback: CalendarEventParticipant with workspaceMemberId on the event itself
 
 const ownershipCache = new Map<string, CalendarEventOwnership>();
+// calendarChannelId -> workspaceMemberId (survives across events in the same channel)
+const channelOwnerCache = new Map<string, string>();
 
-const resolveViaChannelChain = async (
+const getCalendarChannelId = async (
   calendarEventId: string,
-): Promise<CalendarEventOwnership | null> => {
-  // 1. CalendarEvent -> CalendarChannelEventAssociation -> calendarChannelId
+): Promise<string | null> => {
   const assocUrl = buildRestUrl('calendarChannelEventAssociations', {
     filter: { calendarEventId: { eq: calendarEventId } },
     limit: 1,
@@ -52,14 +56,14 @@ const resolveViaChannelChain = async (
     assocUrl,
     { headers: authHeaders() },
   );
-
   const associations = assocResponse.data?.data?.calendarChannelEventAssociations ?? [];
-  if (associations.length === 0) return null;
+  return (associations[0]?.calendarChannelId as string) ?? null;
+};
 
-  const calendarChannelId = associations[0].calendarChannelId as string | undefined;
-  if (!calendarChannelId) return null;
-
-  // 2. CalendarChannel -> connectedAccountId
+const resolveViaChannelChain = async (
+  calendarChannelId: string,
+): Promise<CalendarEventOwnership | null> => {
+  // CalendarChannel -> connectedAccountId
   const channelResponse = await axios.get<TwentyDetailResponse>(
     `${getRestApiUrl()}/calendarChannels/${calendarChannelId}`,
     { headers: authHeaders() },
@@ -70,7 +74,7 @@ const resolveViaChannelChain = async (
   const connectedAccountId = (channelData as Record<string, unknown>)?.connectedAccountId as string | undefined;
   if (!connectedAccountId) return null;
 
-  // 3. ConnectedAccount -> accountOwnerId (= workspaceMemberId)
+  // ConnectedAccount -> accountOwnerId (= workspaceMemberId)
   const accountResponse = await axios.get<TwentyDetailResponse>(
     `${getRestApiUrl()}/connectedAccounts/${connectedAccountId}`,
     { headers: authHeaders() },
@@ -82,6 +86,52 @@ const resolveViaChannelChain = async (
   if (!workspaceMemberId) return null;
 
   return { workspaceMemberId };
+};
+
+// Resolve owner by finding a sibling event in the same calendar channel
+// that already has a participant with a resolved workspaceMemberId.
+// All events in the same channel belong to the same connected account.
+const resolveViaChannelSiblings = async (
+  calendarChannelId: string,
+): Promise<CalendarEventOwnership | null> => {
+  // Check channel owner cache first
+  const cached = channelOwnerCache.get(calendarChannelId);
+  if (cached) return { workspaceMemberId: cached };
+
+  // Get a batch of sibling events from the same channel
+  const siblingsUrl = buildRestUrl('calendarChannelEventAssociations', {
+    filter: { calendarChannelId: { eq: calendarChannelId } },
+    limit: 20,
+  });
+  const siblingsResponse = await axios.get<TwentyListResponse<'calendarChannelEventAssociations'>>(
+    siblingsUrl,
+    { headers: authHeaders() },
+  );
+  const siblings = siblingsResponse.data?.data?.calendarChannelEventAssociations ?? [];
+
+  for (const sibling of siblings) {
+    const siblingEventId = sibling.calendarEventId as string | undefined;
+    if (!siblingEventId) continue;
+
+    const participantsUrl = buildRestUrl('calendarEventParticipants', {
+      filter: { calendarEventId: { eq: siblingEventId } },
+      limit: 10,
+    });
+    const participantsResponse = await axios.get<TwentyListResponse<'calendarEventParticipants'>>(
+      participantsUrl,
+      { headers: authHeaders() },
+    );
+    const participants = participantsResponse.data?.data?.calendarEventParticipants ?? [];
+    for (const p of participants) {
+      const wmId = p.workspaceMemberId as string | undefined;
+      if (wmId) {
+        channelOwnerCache.set(calendarChannelId, wmId);
+        return { workspaceMemberId: wmId };
+      }
+    }
+  }
+
+  return null;
 };
 
 const resolveViaParticipants = async (
@@ -110,20 +160,42 @@ export const resolveCalendarEventOwner = async (
   if (cached) return cached;
 
   let result: CalendarEventOwnership = {};
+  let calendarChannelId: string | null = null;
 
-  // Try primary chain: association -> channel -> account -> member
+  // Step 1: get the calendarChannelId from the association
   try {
-    const primary = await resolveViaChannelChain(calendarEventId);
-    if (primary?.workspaceMemberId) result = primary;
+    calendarChannelId = await getCalendarChannelId(calendarEventId);
   } catch {
-    // Chain broken (404 on channel/account), fall through
+    // No association found
   }
 
-  // Fallback 1: participant with workspaceMemberId
+  // Step 2: try primary chain via workspace calendarChannel -> connectedAccount
+  if (calendarChannelId) {
+    try {
+      const primary = await resolveViaChannelChain(calendarChannelId);
+      if (primary?.workspaceMemberId) result = primary;
+    } catch {
+      // Chain broken (404 — calendarChannel/connectedAccount moved to core in Twenty 1.21+)
+    }
+  }
+
+  // Fallback 1: participant with workspaceMemberId on this event
   if (!result.workspaceMemberId) {
     try {
       const participant = await resolveViaParticipants(calendarEventId);
       if (participant?.workspaceMemberId) result = participant;
+    } catch {
+      // fall through
+    }
+  }
+
+  // Fallback 2: resolve via sibling events in the same calendar channel.
+  // All events in the same channel belong to the same connected account,
+  // so if any sibling has a resolved participant, the owner is the same.
+  if (!result.workspaceMemberId && calendarChannelId) {
+    try {
+      const sibling = await resolveViaChannelSiblings(calendarChannelId);
+      if (sibling?.workspaceMemberId) result = sibling;
     } catch {
       // fall through
     }
