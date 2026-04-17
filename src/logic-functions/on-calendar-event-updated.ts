@@ -78,7 +78,7 @@ const handler = async (
 export default defineLogicFunction({
   universalIdentifier: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e',
   name: 'on-calendar-event-updated',
-  description: 'Schedules a Meeting BaaS recording bot when a calendar event gains a conference link',
+  description: 'Schedules a Meeting BaaS bot when a calendar event gains a conference link',
   timeoutSeconds: 15,
   handler,
   databaseEventTriggerSettings: {
