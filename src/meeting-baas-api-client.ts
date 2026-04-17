@@ -79,6 +79,8 @@ export class MeetingBaasApiClient {
       meeting_url: item.meetingUrl,
       join_at: item.joinAt,
       bot_name: item.botName || 'Twenty CRM Recorder',
+      transcription_enabled: true,
+      transcription_config: { provider: 'gladia' as const },
       ...(item.recordingMode && { recording_mode: item.recordingMode }),
       ...(item.extra && { extra: item.extra }),
       ...(item.callbackUrl && {

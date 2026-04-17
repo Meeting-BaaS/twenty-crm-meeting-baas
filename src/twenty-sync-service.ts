@@ -88,26 +88,31 @@ const resolveViaChannelChain = async (
   return { workspaceMemberId };
 };
 
-// Resolve owner by finding a sibling event in the same calendar channel
-// that already has a participant with a resolved workspaceMemberId.
+// Resolve owner by finding sibling events in the same calendar channel
+// and identifying the workspace member who is the channel owner.
 // All events in the same channel belong to the same connected account.
+// Strategy: collect (workspaceMemberId, isOrganizer) pairs across sibling
+// participants, then pick the member who appears as organizer most often.
+// Ties broken by total appearance count (the channel owner is a participant
+// in the most events since it's their calendar).
 const resolveViaChannelSiblings = async (
   calendarChannelId: string,
 ): Promise<CalendarEventOwnership | null> => {
-  // Check channel owner cache first
   const cached = channelOwnerCache.get(calendarChannelId);
   if (cached) return { workspaceMemberId: cached };
 
-  // Get a batch of sibling events from the same channel
   const siblingsUrl = buildRestUrl('calendarChannelEventAssociations', {
     filter: { calendarChannelId: { eq: calendarChannelId } },
-    limit: 20,
+    limit: 50,
   });
   const siblingsResponse = await axios.get<TwentyListResponse<'calendarChannelEventAssociations'>>(
     siblingsUrl,
     { headers: authHeaders() },
   );
   const siblings = siblingsResponse.data?.data?.calendarChannelEventAssociations ?? [];
+
+  // Tally: workspaceMemberId -> { organizer: count, total: count }
+  const tally = new Map<string, { organizer: number; total: number }>();
 
   for (const sibling of siblings) {
     const siblingEventId = sibling.calendarEventId as string | undefined;
@@ -124,14 +129,24 @@ const resolveViaChannelSiblings = async (
     const participants = participantsResponse.data?.data?.calendarEventParticipants ?? [];
     for (const p of participants) {
       const wmId = p.workspaceMemberId as string | undefined;
-      if (wmId) {
-        channelOwnerCache.set(calendarChannelId, wmId);
-        return { workspaceMemberId: wmId };
-      }
+      if (!wmId) continue;
+      const entry = tally.get(wmId) ?? { organizer: 0, total: 0 };
+      entry.total++;
+      if (p.isOrganizer === true) entry.organizer++;
+      tally.set(wmId, entry);
     }
   }
 
-  return null;
+  if (tally.size === 0) return null;
+
+  // Pick the member with the most organizer appearances, then by total
+  const best = [...tally.entries()].sort((a, b) => {
+    const orgDiff = b[1].organizer - a[1].organizer;
+    return orgDiff !== 0 ? orgDiff : b[1].total - a[1].total;
+  })[0];
+
+  channelOwnerCache.set(calendarChannelId, best[0]);
+  return { workspaceMemberId: best[0] };
 };
 
 const resolveViaParticipants = async (
