@@ -10,6 +10,7 @@ import {
   DEFAULT_WORKSPACE_RECORDING_PREFERENCE,
   RECORDING_PREFERENCE_VARIABLE_KEY,
 } from './recording-preferences';
+import { WORKSPACE_WEBHOOK_BASE_URL_VARIABLE_KEY } from './workspace-webhook-url';
 
 export default defineApplication({
   universalIdentifier: APPLICATION_UNIVERSAL_IDENTIFIER,
@@ -30,6 +31,12 @@ export default defineApplication({
       description:
         'Workspace default for automatic recording when a member has no explicit override',
       value: DEFAULT_WORKSPACE_RECORDING_PREFERENCE,
+    },
+    [WORKSPACE_WEBHOOK_BASE_URL_VARIABLE_KEY]: {
+      universalIdentifier: 'f639c0e0-67d8-46fb-86c8-1d9c36a64655',
+      description:
+        'Workspace base URL used for Meeting BaaS callbacks, for example https://your-workspace.twenty.com',
+      value: '',
     },
     AUTO_CREATE_CONTACTS: {
       universalIdentifier: '9637bafd-5888-4f34-bf8f-a4c82dbc4942',

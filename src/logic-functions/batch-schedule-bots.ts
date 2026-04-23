@@ -13,6 +13,7 @@ import {
   resolveEffectiveRecordingPreference,
 } from '../recording-preferences';
 import { buildRestUrl, restHeaders } from '../utils';
+import { getMeetingBaasCallbackUrl } from '../workspace-webhook-url';
 
 const logger = createLogger('batch-schedule-bots');
 
@@ -150,8 +151,11 @@ export default defineLogicFunction({
       return result;
     }
 
-    const serverUrl = process.env.TWENTY_API_URL ?? '';
-    const callbackUrl = serverUrl ? `${serverUrl}/s/webhook/meeting-baas` : undefined;
+    const callbackUrl = getMeetingBaasCallbackUrl();
+    if (!callbackUrl) {
+      result.errors.push('WORKSPACE_WEBHOOK_BASE_URL not configured');
+      return result;
+    }
 
     // 1. Fetch future calendar events with conference links
     logger.debug('fetching future calendar events');

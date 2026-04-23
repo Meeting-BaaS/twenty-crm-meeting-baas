@@ -8,6 +8,7 @@ import {
   resolveEffectiveRecordingPreference,
 } from '../recording-preferences';
 import { buildRestUrl, restHeaders } from '../utils';
+import { getMeetingBaasCallbackUrl } from '../workspace-webhook-url';
 
 const logger = createLogger('schedule-bot');
 
@@ -252,7 +253,12 @@ const scheduleBotForMember = async (
 
   // Schedule the bot
   const client = new MeetingBaasApiClient(apiKey);
-  const serverUrl = process.env.TWENTY_API_URL ?? '';
+  const callbackUrl = getMeetingBaasCallbackUrl();
+  if (!callbackUrl) {
+    logger.error('Workspace webhook base URL is not configured; skipping bot scheduling');
+    return null;
+  }
+
   const botId = await client.createScheduledBot({
     meetingUrl: conferenceUrl,
     joinAt: startsAt,
@@ -264,7 +270,7 @@ const scheduleBotForMember = async (
       meeting_url: conferenceUrl,
       meeting_title: meetingTitle,
     },
-    callbackUrl: serverUrl ? `${serverUrl}/s/webhook/meeting-baas` : undefined,
+    callbackUrl,
     callbackSecret: apiKey,
   });
 

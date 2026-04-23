@@ -8,6 +8,10 @@ import {
   type RecordingPreference,
   resolveEffectiveRecordingPreference,
 } from '../recording-preferences';
+import {
+  selectWorkspaceBaseUrl,
+  WORKSPACE_WEBHOOK_BASE_URL_VARIABLE_KEY,
+} from '../workspace-webhook-url';
 
 type PreferenceSelection = RecordingPreference | 'WORKSPACE_DEFAULT';
 
@@ -272,6 +276,8 @@ const SECRET_VARIABLE_MASK = '********';
 const fetchWorkspaceAppSettings = async (): Promise<{
   apiKeyConfigured: boolean;
   workspacePreference: RecordingPreference;
+  webhookBaseUrl: string | null;
+  webhookBaseUrlVariableId: string | null;
 }> => {
   const response = await fetch(`${getApiUrl()}/metadata`, {
     method: 'POST',
@@ -281,7 +287,7 @@ const fetchWorkspaceAppSettings = async (): Promise<{
     },
     body: JSON.stringify({
       query:
-        '{ findManyApplications { universalIdentifier applicationVariables { key value isSecret } } }',
+        '{ findManyApplications { universalIdentifier applicationVariables { id key value isSecret } } }',
     }),
   });
   const data = await response.json();
@@ -297,6 +303,9 @@ const fetchWorkspaceAppSettings = async (): Promise<{
   const workspacePreferenceVar = vars.find(
     (v: { key: string }) => v.key === RECORDING_PREFERENCE_VARIABLE_KEY,
   );
+  const webhookBaseUrlVar = vars.find(
+    (v: { key: string }) => v.key === WORKSPACE_WEBHOOK_BASE_URL_VARIABLE_KEY,
+  );
 
   return {
     apiKeyConfigured:
@@ -305,7 +314,67 @@ const fetchWorkspaceAppSettings = async (): Promise<{
       null,
       workspacePreferenceVar?.value,
     ),
+    webhookBaseUrl: webhookBaseUrlVar?.value ?? null,
+    webhookBaseUrlVariableId: webhookBaseUrlVar?.id ?? null,
   };
+};
+
+const fetchCurrentWorkspaceBaseUrl = async (): Promise<string | null> => {
+  const response = await fetch(`${getApiUrl()}/metadata`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query:
+        '{ currentUser { currentWorkspace { workspaceUrls { customUrl subdomainUrl } } } }',
+    }),
+  });
+  const data = await response.json();
+  const workspaceUrls = data?.data?.currentUser?.currentWorkspace?.workspaceUrls;
+
+  return selectWorkspaceBaseUrl(
+    workspaceUrls?.customUrl,
+    workspaceUrls?.subdomainUrl,
+  );
+};
+
+const updateApplicationVariable = async (
+  variableId: string,
+  value: string,
+): Promise<void> => {
+  const response = await fetch(`${getApiUrl()}/metadata`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query: `
+        mutation UpdateApplicationRegistrationVariable($input: UpdateApplicationRegistrationVariableInput!) {
+          updateApplicationRegistrationVariable(input: $input) {
+            id
+          }
+        }
+      `,
+      variables: {
+        input: {
+          id: variableId,
+          update: { value },
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to update workspace webhook URL: ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (data?.errors?.length) {
+    throw new Error(data.errors[0]?.message ?? 'Failed to update workspace webhook URL');
+  }
 };
 
 const updateWorkspaceMember = async (
@@ -348,6 +417,7 @@ const MeetingBaasSettings = () => {
   const [workspacePreference, setWorkspacePreference] = useState<RecordingPreference>(
     DEFAULT_WORKSPACE_RECORDING_PREFERENCE,
   );
+  const [workspaceWebhookBaseUrl, setWorkspaceWebhookBaseUrl] = useState<string | null>(null);
   const [hasCalendar, setHasCalendar] = useState<boolean | null>(null);
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -359,12 +429,33 @@ const MeetingBaasSettings = () => {
     Promise.all([
       fetchCurrentWorkspaceMember(),
       fetchWorkspaceAppSettings(),
+      fetchCurrentWorkspaceBaseUrl(),
     ])
-      .then(async ([memberData, appSettings]) => {
+      .then(async ([memberData, appSettings, currentWorkspaceBaseUrl]) => {
         setMember(memberData);
         setPreference(memberData.recordingPreference ?? 'WORKSPACE_DEFAULT');
         setWorkspacePreference(appSettings.workspacePreference);
         setApiKeyConfigured(appSettings.apiKeyConfigured);
+        setWorkspaceWebhookBaseUrl(
+          selectWorkspaceBaseUrl(appSettings.webhookBaseUrl, null),
+        );
+
+        if (
+          appSettings.webhookBaseUrlVariableId &&
+          currentWorkspaceBaseUrl &&
+          appSettings.webhookBaseUrl !== currentWorkspaceBaseUrl
+        ) {
+          try {
+            await updateApplicationVariable(
+              appSettings.webhookBaseUrlVariableId,
+              currentWorkspaceBaseUrl,
+            );
+            setWorkspaceWebhookBaseUrl(currentWorkspaceBaseUrl);
+          } catch {
+            // Non-fatal: keep rendering with current value
+          }
+        }
+
         const channels = await fetchUserCalendarChannels(memberData.id);
         setHasCalendar(channels.length > 0);
       })
@@ -458,6 +549,12 @@ const MeetingBaasSettings = () => {
           </StyledStatusBadge>
         </StyledCard>
       </div>
+
+      {workspaceWebhookBaseUrl && (
+        <StyledBanner variant="info">
+          Recording webhooks will be sent to {workspaceWebhookBaseUrl}/s/webhook/meeting-baas
+        </StyledBanner>
+      )}
 
       {/* Calendar Connection Banner */}
       {hasCalendar === false && (
