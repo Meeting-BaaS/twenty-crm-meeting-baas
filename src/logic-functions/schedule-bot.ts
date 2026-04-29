@@ -284,7 +284,7 @@ const scheduleBotForMember = async (
       date: startsAt,
       duration: 0,
       platform: detectPlatform(conferenceUrl),
-      status: 'IN_PROGRESS',
+      status: 'SCHEDULED',
       meetingUrl: { primaryLinkLabel: 'Join Meeting', primaryLinkUrl: conferenceUrl, secondaryLinks: null },
       mp4Url: null,
       transcript: '',

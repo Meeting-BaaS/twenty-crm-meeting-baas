@@ -6,6 +6,7 @@ export type BotWebhookCompletedData = V2.BotWebhookCompletedData;
 export type BotWebhookFailed = V2.BotWebhookFailed;
 export type BotWebhookFailedData = V2.BotWebhookFailedData;
 export type BotWebhookStatusChange = V2.BotWebhookStatusChange;
+export type BotWebhookStatusChangeData = V2.BotWebhookStatusChangeData;
 
 export type MeetingBaasWebhookPayload =
   | BotWebhookCompleted
@@ -48,6 +49,9 @@ export type ProcessResult = {
   durationMinutes?: number;
 };
 
+// Recording status
+export type RecordingStatus = 'COMPLETED' | 'FAILED' | 'IN_PROGRESS' | 'SCHEDULED';
+
 // Recording upsert input for the REST API
 export type RecordingUpsertInput = {
   botId: string;
@@ -55,7 +59,7 @@ export type RecordingUpsertInput = {
   date: string;
   duration: number;
   platform: MeetingPlatform;
-  status: 'COMPLETED' | 'FAILED' | 'IN_PROGRESS';
+  status: RecordingStatus;
   meetingUrl: { primaryLinkLabel: string; primaryLinkUrl: string; secondaryLinks: null } | null;
   mp4Url: { primaryLinkLabel: string; primaryLinkUrl: string; secondaryLinks: null } | null;
   transcript: string;

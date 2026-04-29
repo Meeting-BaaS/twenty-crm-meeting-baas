@@ -14,6 +14,7 @@ export const MEETING_URL_FIELD_ID = 'ad56795c-49ac-4075-b099-42e938d9e36e';
 export const MP4_URL_FIELD_ID = '00ecab81-954c-47c4-a263-96fd5ccbc39d';
 export const PLATFORM_FIELD_ID = 'eaa24930-508b-4e63-80c3-cc607d8e2845';
 export const STATUS_FIELD_ID = '6fce2fe2-169e-4780-9fc4-d330d3cd39bc';
+export const VIDEO_FILE_FIELD_ID = 'b7e4f3a1-2c5d-4e8f-9a1b-3d6c7e8f9a0b';
 
 export default defineObject({
   universalIdentifier: RECORDING_UNIVERSAL_IDENTIFIER,
@@ -97,6 +98,13 @@ export default defineObject({
       ],
     },
     {
+      universalIdentifier: VIDEO_FILE_FIELD_ID,
+      type: FieldType.FILES,
+      label: 'Video File',
+      name: 'videoFile',
+      icon: 'IconFileVideo',
+    },
+    {
       universalIdentifier: STATUS_FIELD_ID,
       type: FieldType.SELECT,
       label: 'Status',
@@ -106,6 +114,7 @@ export default defineObject({
         { id: 'e127d867-4931-4e15-a5be-971caa8678a3', value: 'COMPLETED', label: 'Completed', position: 0, color: 'green' },
         { id: '776885a7-8a42-415c-92fe-e08f5a1274ea', value: 'FAILED', label: 'Failed', position: 1, color: 'red' },
         { id: '12374b43-a6fe-48d6-8a71-437242e59df2', value: 'IN_PROGRESS', label: 'In Progress', position: 2, color: 'orange' },
+        { id: 'a8c5d2e1-3f7b-4a9c-b6d4-e5f1a2b3c4d5', value: 'SCHEDULED', label: 'Scheduled', position: 3, color: 'sky' },
       ],
     },
   ],

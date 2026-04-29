@@ -15,6 +15,7 @@ export { default as OnCalendarEventUpdated } from './logic-functions/on-calendar
 
 // Logic functions (HTTP-triggered)
 export { default as BatchScheduleBots } from './logic-functions/batch-schedule-bots';
+export { default as BackfillRecordingFiles } from './logic-functions/backfill-recording-files';
 
 // Types
 export { WebhookEvent } from './types';
@@ -24,11 +25,13 @@ export type {
   BotWebhookFailed,
   BotWebhookFailedData,
   BotWebhookStatusChange,
+  BotWebhookStatusChangeData,
   CalendarEventOwnership,
   MeetingBaasWebhookPayload,
   MeetingPlatform,
   ProcessResult,
   RecordingData,
+  RecordingStatus,
   RecordingUpsertInput,
   SyncResult,
 } from './types';
@@ -48,7 +51,14 @@ export {
   resolveCalendarEventOwner,
   syncBotRecording,
   upsertRecording,
+  upsertRecordingStatus,
 } from './twenty-sync-service';
+
+// File storage
+export { downloadAndStoreRecording } from './twenty-file-upload';
+
+// Application config
+export { STORE_RECORDINGS_LOCALLY_VARIABLE_KEY } from './application-config';
 
 // Utilities
 export { createLogger } from './logger';

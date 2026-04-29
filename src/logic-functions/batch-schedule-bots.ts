@@ -256,7 +256,7 @@ export default defineLogicFunction({
               date: event.startsAt!,
               duration: 0,
               platform: detectPlatform(event.conferenceUrl!),
-              status: 'IN_PROGRESS',
+              status: 'SCHEDULED',
               meetingUrl: { primaryLinkLabel: 'Join Meeting', primaryLinkUrl: event.conferenceUrl!, secondaryLinks: null },
               mp4Url: null,
               transcript: '',

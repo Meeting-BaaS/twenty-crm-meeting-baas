@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
   CalendarEventOwnership,
   MeetingPlatform,
+  RecordingStatus,
   RecordingUpsertInput,
   SyncResult,
 } from './types';
@@ -272,6 +273,18 @@ export const checkIfRecordingExists = async (
   } catch {
     return null;
   }
+};
+
+export const upsertRecordingStatus = async (
+  recordingId: string,
+  status: RecordingStatus,
+): Promise<void> => {
+  await axios({
+    method: 'PATCH',
+    headers: restHeaders(),
+    url: `${getRestApiUrl()}/recordings/${recordingId}`,
+    data: { status },
+  });
 };
 
 export const upsertRecording = async (

@@ -110,6 +110,30 @@ export class MeetingBaasApiClient {
     return { botIds, errors };
   }
 
+  // Fetch bot details including fresh presigned artifact URLs (valid for 4 hours)
+  async getBotDetails(botId: string): Promise<{
+    video: string | null;
+    audio: string | null;
+    diarization: string | null;
+    transcription: string | null;
+  }> {
+    logger.debug(`fetching bot details for ${botId}`);
+
+    const result = await this.client.getBotDetails({ bot_id: botId });
+
+    if (!result.success) {
+      const errorInfo = 'code' in result ? ` (${result.code})` : '';
+      throw new Error(`Meeting BaaS API error${errorInfo}: ${result.error}`);
+    }
+
+    return {
+      video: result.data.video ?? null,
+      audio: result.data.audio ?? null,
+      diarization: result.data.diarization ?? null,
+      transcription: result.data.transcription ?? null,
+    };
+  }
+
   // Transform V2 bot.completed webhook data into normalized RecordingData
   transformWebhookData(
     data: V2.BotWebhookCompletedData,

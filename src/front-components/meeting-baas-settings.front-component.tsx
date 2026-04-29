@@ -12,6 +12,7 @@ import {
   selectWorkspaceBaseUrl,
   WORKSPACE_WEBHOOK_BASE_URL_VARIABLE_KEY,
 } from '../workspace-webhook-url';
+import { STORE_RECORDINGS_LOCALLY_VARIABLE_KEY } from '../application-config';
 
 type PreferenceSelection = RecordingPreference | 'WORKSPACE_DEFAULT';
 
@@ -218,6 +219,14 @@ type BatchScheduleResult = {
   hasMore: boolean;
 };
 
+type BackfillResult = {
+  processed: number;
+  refreshed: number;
+  stored: number;
+  skipped: number;
+  errors: string[];
+};
+
 const PREFERENCE_OPTIONS: Array<{
   value: PreferenceSelection;
   title: string;
@@ -278,6 +287,8 @@ const fetchWorkspaceAppSettings = async (): Promise<{
   workspacePreference: RecordingPreference;
   webhookBaseUrl: string | null;
   webhookBaseUrlVariableId: string | null;
+  storeLocally: boolean;
+  storeLocallyVariableId: string | null;
 }> => {
   const response = await fetch(`${getApiUrl()}/metadata`, {
     method: 'POST',
@@ -306,6 +317,9 @@ const fetchWorkspaceAppSettings = async (): Promise<{
   const webhookBaseUrlVar = vars.find(
     (v: { key: string }) => v.key === WORKSPACE_WEBHOOK_BASE_URL_VARIABLE_KEY,
   );
+  const storeLocallyVar = vars.find(
+    (v: { key: string }) => v.key === STORE_RECORDINGS_LOCALLY_VARIABLE_KEY,
+  );
 
   return {
     apiKeyConfigured:
@@ -316,6 +330,8 @@ const fetchWorkspaceAppSettings = async (): Promise<{
     ),
     webhookBaseUrl: webhookBaseUrlVar?.value ?? null,
     webhookBaseUrlVariableId: webhookBaseUrlVar?.id ?? null,
+    storeLocally: storeLocallyVar?.value !== 'false',
+    storeLocallyVariableId: storeLocallyVar?.id ?? null,
   };
 };
 
@@ -424,6 +440,11 @@ const MeetingBaasSettings = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isBatchScheduling, setIsBatchScheduling] = useState(false);
   const [batchResult, setBatchResult] = useState<BatchScheduleResult | null>(null);
+  const [storeLocally, setStoreLocally] = useState(true);
+  const [storeLocallyVariableId, setStoreLocallyVariableId] = useState<string | null>(null);
+  const [isTogglingStorage, setIsTogglingStorage] = useState(false);
+  const [isBackfilling, setIsBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState<BackfillResult | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -436,6 +457,8 @@ const MeetingBaasSettings = () => {
         setPreference(memberData.recordingPreference ?? 'WORKSPACE_DEFAULT');
         setWorkspacePreference(appSettings.workspacePreference);
         setApiKeyConfigured(appSettings.apiKeyConfigured);
+        setStoreLocally(appSettings.storeLocally);
+        setStoreLocallyVariableId(appSettings.storeLocallyVariableId);
         setWorkspaceWebhookBaseUrl(
           selectWorkspaceBaseUrl(appSettings.webhookBaseUrl, null),
         );
@@ -505,6 +528,48 @@ const MeetingBaasSettings = () => {
       setBatchResult({ scheduled: 0, skipped: 0, errors: ['Request failed'], hasMore: false });
     } finally {
       setIsBatchScheduling(false);
+    }
+  };
+
+  const handleToggleStorage = async () => {
+    if (!storeLocallyVariableId || isTogglingStorage) return;
+    setIsTogglingStorage(true);
+    const newValue = !storeLocally;
+    setStoreLocally(newValue);
+    try {
+      await updateApplicationVariable(storeLocallyVariableId, String(newValue));
+    } catch {
+      setStoreLocally(!newValue);
+    } finally {
+      setIsTogglingStorage(false);
+    }
+  };
+
+  const handleBackfill = async () => {
+    if (isBackfilling) return;
+    setIsBackfilling(true);
+    setBackfillResult(null);
+    try {
+      const response = await fetch(`${getApiUrl()}/s/backfill-recording-files`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${getToken()}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json();
+      setBackfillResult({
+        processed: data.processed ?? 0,
+        refreshed: data.refreshed ?? 0,
+        stored: data.stored ?? 0,
+        skipped: data.skipped ?? 0,
+        errors: data.errors ?? [],
+      });
+    } catch {
+      setBackfillResult({ processed: 0, refreshed: 0, stored: 0, skipped: 0, errors: ['Request failed'] });
+    } finally {
+      setIsBackfilling(false);
     }
   };
 
@@ -616,6 +681,63 @@ const MeetingBaasSettings = () => {
           Recording is enabled but no API key is set. Set MEETING_BAAS_API_KEY in the Variables tab
           to start recording.
         </StyledBanner>
+      )}
+
+      {/* Storage Settings */}
+      {apiKeyConfigured && (
+        <div>
+          <StyledSectionTitle>Storage</StyledSectionTitle>
+          <StyledSectionSubtitle>
+            Control how recording video files are stored
+          </StyledSectionSubtitle>
+          <StyledCard>
+            <StyledTextContainer>
+              <StyledTitle>Store recordings in Twenty</StyledTitle>
+              <StyledDescription>
+                Download and store video files locally. When disabled, recordings link directly to
+                Meeting BaaS (URLs refresh automatically).
+              </StyledDescription>
+            </StyledTextContainer>
+            <StyledRadioInput
+              type="checkbox"
+              checked={storeLocally}
+              onChange={handleToggleStorage}
+              disabled={isTogglingStorage}
+              style={{ width: 20, height: 20 }}
+            />
+          </StyledCard>
+
+          <div style={{ marginTop: 12 }}>
+            <StyledButton
+              onClick={handleBackfill}
+              disabled={isBackfilling}
+              variant="secondary"
+            >
+              {isBackfilling ? 'Processing...' : 'Refresh recording URLs'}
+            </StyledButton>
+            <StyledDescription style={{ display: 'block', marginTop: 8 }}>
+              {storeLocally
+                ? 'Refreshes expired URLs and downloads video files for recordings that are not yet stored locally.'
+                : 'Refreshes expired presigned URLs for all recordings without stored files.'}
+            </StyledDescription>
+          </div>
+
+          {backfillResult && (backfillResult.errors?.length ?? 0) === 0 && (
+            <StyledResultBanner variant="success" style={{ marginTop: 12 }}>
+              {backfillResult.refreshed > 0 || backfillResult.stored > 0
+                ? `Refreshed ${backfillResult.refreshed} URL${backfillResult.refreshed !== 1 ? 's' : ''}${backfillResult.stored > 0 ? `, stored ${backfillResult.stored} file${backfillResult.stored !== 1 ? 's' : ''}` : ''} (${backfillResult.skipped} skipped)`
+                : 'No recordings to process'}
+            </StyledResultBanner>
+          )}
+
+          {backfillResult && (backfillResult.errors?.length ?? 0) > 0 && (
+            <StyledResultBanner variant="error" style={{ marginTop: 12 }}>
+              {backfillResult.refreshed > 0
+                ? `Refreshed ${backfillResult.refreshed}, but ${backfillResult.errors.length} error${backfillResult.errors.length !== 1 ? 's' : ''} occurred`
+                : `Failed: ${backfillResult.errors[0]}`}
+            </StyledResultBanner>
+          )}
+        </div>
       )}
 
       {/* Batch Schedule Existing Meetings */}

@@ -12,6 +12,8 @@ import {
 } from './recording-preferences';
 import { WORKSPACE_WEBHOOK_BASE_URL_VARIABLE_KEY } from './workspace-webhook-url';
 
+export const STORE_RECORDINGS_LOCALLY_VARIABLE_KEY = 'STORE_RECORDINGS_LOCALLY';
+
 export default defineApplication({
   universalIdentifier: APPLICATION_UNIVERSAL_IDENTIFIER,
   displayName: APP_DISPLAY_NAME,
@@ -41,6 +43,12 @@ export default defineApplication({
     AUTO_CREATE_CONTACTS: {
       universalIdentifier: '9637bafd-5888-4f34-bf8f-a4c82dbc4942',
       description: 'Whether to auto-create contacts for unknown participants (true/false)',
+      value: 'true',
+    },
+    [STORE_RECORDINGS_LOCALLY_VARIABLE_KEY]: {
+      universalIdentifier: 'a3b1c9d7-4e2f-5a8b-6c0d-7e9f1a2b3c4d',
+      description:
+        'Download and store recording files in Twenty storage (true/false). When disabled, recordings link to Meeting BaaS.',
       value: 'true',
     },
   },

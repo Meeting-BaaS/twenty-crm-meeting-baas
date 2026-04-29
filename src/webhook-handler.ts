@@ -7,7 +7,8 @@ import {
   parseWebhookPayload,
   verifyWebhookApiKey
 } from './webhook-validator';
-import { syncBotRecording } from './twenty-sync-service';
+import { syncBotRecording, checkIfRecordingExists, upsertRecordingStatus } from './twenty-sync-service';
+import { downloadAndStoreRecording } from './twenty-file-upload';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -48,11 +49,31 @@ export class WebhookHandler {
       if (payload.event === 'bot.failed') {
         const failedData = payload.data;
         this.logger.error(`bot failed: ${failedData.error_message} (${failedData.error_code})`);
+
+        // Transition recording to FAILED status
+        const existingId = await checkIfRecordingExists(failedData.bot_id);
+        if (existingId) {
+          await upsertRecordingStatus(existingId, 'FAILED');
+          this.logger.debug(`recording ${existingId} transitioned to FAILED`);
+        }
+
         throw new Error(`Meeting BaaS bot failed: ${failedData.error_message}`);
       }
 
       if (payload.event === 'bot.status_change') {
-        this.logger.debug(`bot status change: ${JSON.stringify(payload.data)}`);
+        const statusData = payload.data;
+        const statusCode = statusData.status.code;
+        this.logger.debug(`bot status change: bot_id=${statusData.bot_id} code=${statusCode}`);
+
+        // Transition SCHEDULED → IN_PROGRESS when the bot enters the call
+        if (['in_call_recording', 'in_call_not_recording', 'recording'].includes(statusCode)) {
+          const existingId = await checkIfRecordingExists(statusData.bot_id);
+          if (existingId) {
+            await upsertRecordingStatus(existingId, 'IN_PROGRESS');
+            this.logger.debug(`recording ${existingId} transitioned to IN_PROGRESS`);
+          }
+        }
+
         return { success: true };
       }
 
@@ -117,6 +138,12 @@ export class WebhookHandler {
       if (recordingId) {
         result.recordingId = recordingId;
         this.logger.debug(`upserted recording id=${recordingId}`);
+
+        // Download MP4 and store in Twenty's file storage (non-fatal)
+        const storeLocally = process.env.STORE_RECORDINGS_LOCALLY !== 'false';
+        if (storeLocally && recordingData.mp4Url) {
+          await downloadAndStoreRecording(recordingData.mp4Url, recordingId);
+        }
       }
 
       result.success = true;
