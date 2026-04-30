@@ -2,7 +2,7 @@ import {
   defineField,
   FieldType,
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
-} from 'twenty-sdk';
+} from 'twenty-sdk/define';
 
 export const BOT_NAME_FIELD_ID = '6a37564a-25e6-5bdb-a119-1522e3817ae6';
 

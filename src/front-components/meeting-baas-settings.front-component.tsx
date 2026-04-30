@@ -1,6 +1,6 @@
 import styled from '@emotion/styled';
 import { useEffect, useState } from 'react';
-import { defineFrontComponent } from 'twenty-sdk';
+import { defineFrontComponent } from 'twenty-sdk/define';
 import { APPLICATION_UNIVERSAL_IDENTIFIER } from '../constants/universal-identifiers';
 import {
   DEFAULT_WORKSPACE_RECORDING_PREFERENCE,
@@ -25,6 +25,13 @@ type CalendarChannel = {
   id: string;
 };
 
+type BatchScheduleEvent = {
+  id: string;
+  conferenceUrl: string;
+  startsAt?: string;
+  title?: string;
+};
+
 const getApiUrl = () => process.env.TWENTY_API_URL ?? '';
 const getToken = () => process.env.TWENTY_APP_ACCESS_TOKEN ?? '';
 
@@ -36,7 +43,7 @@ const StyledContainer = styled.div`
 `;
 
 const StyledSectionTitle = styled.h3`
-  color: #333;
+  color: var(--t-font-color-primary);
   font-family: 'Inter', sans-serif;
   font-size: 15px;
   font-weight: 600;
@@ -44,7 +51,7 @@ const StyledSectionTitle = styled.h3`
 `;
 
 const StyledSectionSubtitle = styled.p`
-  color: #818181;
+  color: var(--t-font-color-secondary);
   font-family: 'Inter', sans-serif;
   font-size: 13px;
   font-weight: 400;
@@ -53,9 +60,9 @@ const StyledSectionSubtitle = styled.p`
 
 const StyledCard = styled.div`
   align-items: center;
-  background: #fff;
-  border: 1px solid #ebebeb;
-  border-radius: 8px;
+  background: var(--t-background-primary);
+  border: 1px solid var(--t-border-color-medium);
+  border-radius: var(--t-border-radius-md);
   display: flex;
   gap: 12px;
   padding: 16px;
@@ -63,9 +70,9 @@ const StyledCard = styled.div`
 
 const StyledIconContainer = styled.div`
   align-items: center;
-  background: #f5f5f5;
-  border-radius: 8px;
-  color: #666;
+  background: var(--t-background-secondary);
+  border-radius: var(--t-border-radius-md);
+  color: var(--t-font-color-tertiary);
   display: flex;
   flex-shrink: 0;
   height: 40px;
@@ -82,23 +89,29 @@ const StyledTextContainer = styled.div`
 `;
 
 const StyledTitle = styled.span`
-  color: #333;
+  color: var(--t-font-color-primary);
   font-family: 'Inter', sans-serif;
   font-size: 14px;
   font-weight: 500;
 `;
 
 const StyledDescription = styled.span`
-  color: #818181;
+  color: var(--t-font-color-secondary);
   font-family: 'Inter', sans-serif;
   font-size: 13px;
 `;
 
 const StyledStatusBadge = styled.span<{ connected: boolean }>`
   align-items: center;
-  background: ${({ connected }) => (connected ? '#10b981' : '#ef4444')};
-  border-radius: 4px;
-  color: #fff;
+  background: ${({ connected }) =>
+    connected
+      ? 'var(--t-snack-bar-success-background-color)'
+      : 'var(--t-snack-bar-error-background-color)'};
+  border-radius: var(--t-border-radius-xs);
+  color: ${({ connected }) =>
+    connected
+      ? 'var(--t-snack-bar-success-color)'
+      : 'var(--t-snack-bar-error-color)'};
   display: inline-flex;
   flex-shrink: 0;
   font-family: 'Inter', sans-serif;
@@ -117,9 +130,11 @@ const StyledRadioGroup = styled.div`
 
 const StyledRadioLabel = styled.label<{ selected: boolean }>`
   align-items: center;
-  background: ${({ selected }) => (selected ? '#f0f0ff' : '#fff')};
-  border: 1px solid ${({ selected }) => (selected ? '#5e5adb' : '#ebebeb')};
-  border-radius: 8px;
+  background: ${({ selected }) =>
+    selected ? 'var(--t-accent-quaternary)' : 'var(--t-background-primary)'};
+  border: 1px solid ${({ selected }) =>
+    selected ? 'var(--t-accent-primary)' : 'var(--t-border-color-medium)'};
+  border-radius: var(--t-border-radius-md);
   cursor: pointer;
   display: flex;
   gap: 12px;
@@ -127,12 +142,12 @@ const StyledRadioLabel = styled.label<{ selected: boolean }>`
   transition: all 0.15s ease;
 
   &:hover {
-    border-color: #5e5adb;
+    border-color: var(--t-accent-primary);
   }
 `;
 
 const StyledRadioInput = styled.input`
-  accent-color: #5e5adb;
+  accent-color: var(--t-accent-primary);
   cursor: pointer;
   height: 16px;
   margin: 0;
@@ -146,24 +161,33 @@ const StyledRadioTextContainer = styled.div`
 `;
 
 const StyledRadioTitle = styled.span`
-  color: #333;
+  color: var(--t-font-color-primary);
   font-family: 'Inter', sans-serif;
   font-size: 14px;
   font-weight: 500;
 `;
 
 const StyledRadioDescription = styled.span`
-  color: #818181;
+  color: var(--t-font-color-secondary);
   font-family: 'Inter', sans-serif;
   font-size: 12px;
 `;
 
 const StyledBanner = styled.div<{ variant: 'info' | 'warning' }>`
   align-items: center;
-  background: ${({ variant }) => (variant === 'warning' ? '#fef3c7' : '#eff6ff')};
-  border: 1px solid ${({ variant }) => (variant === 'warning' ? '#f59e0b' : '#3b82f6')};
-  border-radius: 8px;
-  color: ${({ variant }) => (variant === 'warning' ? '#92400e' : '#1e40af')};
+  background: ${({ variant }) =>
+    variant === 'warning'
+      ? 'var(--t-snack-bar-warning-background-color)'
+      : 'var(--t-snack-bar-info-background-color)'};
+  border: 1px solid ${({ variant }) =>
+    variant === 'warning'
+      ? 'var(--t-snack-bar-warning-color)'
+      : 'var(--t-snack-bar-info-color)'};
+  border-radius: var(--t-border-radius-md);
+  color: ${({ variant }) =>
+    variant === 'warning'
+      ? 'var(--t-snack-bar-warning-color)'
+      : 'var(--t-snack-bar-info-color)'};
   display: flex;
   font-family: 'Inter', sans-serif;
   font-size: 13px;
@@ -173,10 +197,19 @@ const StyledBanner = styled.div<{ variant: 'info' | 'warning' }>`
 
 const StyledButton = styled.button<{ variant?: 'primary' | 'secondary' }>`
   align-items: center;
-  background: ${({ variant }) => (variant === 'secondary' ? '#fff' : '#5e5adb')};
-  border: 1px solid ${({ variant }) => (variant === 'secondary' ? '#ebebeb' : '#5e5adb')};
-  border-radius: 8px;
-  color: ${({ variant }) => (variant === 'secondary' ? '#333' : '#fff')};
+  background: ${({ variant }) =>
+    variant === 'secondary'
+      ? 'var(--t-background-primary)'
+      : 'var(--t-accent-primary)'};
+  border: 1px solid ${({ variant }) =>
+    variant === 'secondary'
+      ? 'var(--t-border-color-medium)'
+      : 'var(--t-accent-primary)'};
+  border-radius: var(--t-border-radius-md);
+  color: ${({ variant }) =>
+    variant === 'secondary'
+      ? 'var(--t-font-color-primary)'
+      : 'var(--t-font-color-inverted)'};
   cursor: pointer;
   display: inline-flex;
   font-family: 'Inter', sans-serif;
@@ -201,10 +234,19 @@ const StyledButton = styled.button<{ variant?: 'primary' | 'secondary' }>`
 
 const StyledResultBanner = styled.div<{ variant: 'success' | 'error' }>`
   align-items: center;
-  background: ${({ variant }) => (variant === 'success' ? '#ecfdf5' : '#fef2f2')};
-  border: 1px solid ${({ variant }) => (variant === 'success' ? '#10b981' : '#ef4444')};
-  border-radius: 8px;
-  color: ${({ variant }) => (variant === 'success' ? '#065f46' : '#991b1b')};
+  background: ${({ variant }) =>
+    variant === 'success'
+      ? 'var(--t-snack-bar-success-background-color)'
+      : 'var(--t-snack-bar-error-background-color)'};
+  border: 1px solid ${({ variant }) =>
+    variant === 'success'
+      ? 'var(--t-snack-bar-success-color)'
+      : 'var(--t-snack-bar-error-color)'};
+  border-radius: var(--t-border-radius-md);
+  color: ${({ variant }) =>
+    variant === 'success'
+      ? 'var(--t-snack-bar-success-color)'
+      : 'var(--t-snack-bar-error-color)'};
   display: flex;
   font-family: 'Inter', sans-serif;
   font-size: 13px;
@@ -280,8 +322,6 @@ const fetchCurrentWorkspaceMember = async (): Promise<WorkspaceMember> => {
   return { id: memberId, recordingPreference: member?.recordingPreference };
 };
 
-const SECRET_VARIABLE_MASK = '********';
-
 const fetchWorkspaceAppSettings = async (): Promise<{
   apiKeyConfigured: boolean;
   workspacePreference: RecordingPreference;
@@ -297,17 +337,11 @@ const fetchWorkspaceAppSettings = async (): Promise<{
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      query:
-        '{ findManyApplications { universalIdentifier applicationVariables { id key value isSecret } } }',
+      query: `{ findOneApplication(universalIdentifier: "${APPLICATION_UNIVERSAL_IDENTIFIER}") { applicationVariables { id key value isSecret } } }`,
     }),
   });
   const data = await response.json();
-  const apps = data?.data?.findManyApplications ?? [];
-  const app = apps.find(
-    (entry: { universalIdentifier?: string }) =>
-      entry.universalIdentifier === APPLICATION_UNIVERSAL_IDENTIFIER,
-  );
-  const vars = app?.applicationVariables ?? [];
+  const vars = data?.data?.findOneApplication?.applicationVariables ?? [];
   const apiKeyVar = vars.find(
     (v: { key: string }) => v.key === 'MEETING_BAAS_API_KEY',
   );
@@ -321,9 +355,12 @@ const fetchWorkspaceAppSettings = async (): Promise<{
     (v: { key: string }) => v.key === STORE_RECORDINGS_LOCALLY_VARIABLE_KEY,
   );
 
+  // Secret variables are partially masked (e.g. "mb-rr********") when set;
+  // empty or unset secrets return "" or null.
+  const apiKeySet = !!apiKeyVar?.value && apiKeyVar.value.length > 0;
+
   return {
-    apiKeyConfigured:
-      !!apiKeyVar && apiKeyVar.value !== SECRET_VARIABLE_MASK,
+    apiKeyConfigured: apiKeySet,
     workspacePreference: resolveEffectiveRecordingPreference(
       null,
       workspacePreferenceVar?.value,
@@ -426,6 +463,48 @@ const fetchUserCalendarChannels = async (_memberId: string): Promise<CalendarCha
   return data?.data?.myCalendarChannels ?? [];
 };
 
+const fetchFutureCalendarEventsForCurrentUser = async (): Promise<{
+  events: BatchScheduleEvent[];
+  hasMore: boolean;
+}> => {
+  const now = new Date().toISOString();
+  const pageSize = 200;
+  const response = await fetch(
+    `${getApiUrl()}/rest/calendarEvents?filter=${encodeURIComponent(`startsAt[gte]:"${now}"`)}&limit=${pageSize}`,
+    {
+      credentials: 'include',
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch calendar events: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const page: Record<string, unknown>[] = data?.data?.calendarEvents ?? [];
+  const events = page
+    .map((entry) => {
+      const conferenceLink = entry.conferenceLink as
+        | { primaryLinkUrl?: string }
+        | undefined;
+      const conferenceUrl = conferenceLink?.primaryLinkUrl;
+      if (!conferenceUrl) return null;
+
+      return {
+        id: entry.id as string,
+        conferenceUrl,
+        startsAt: entry.startsAt as string | undefined,
+        title: entry.title as string | undefined,
+      } satisfies BatchScheduleEvent;
+    })
+    .filter((entry): entry is BatchScheduleEvent => entry !== null);
+
+  return {
+    events,
+    hasMore: page.length >= pageSize,
+  };
+};
+
 const MeetingBaasSettings = () => {
   const [member, setMember] = useState<WorkspaceMember | null>(null);
   const [preference, setPreference] =
@@ -509,13 +588,14 @@ const MeetingBaasSettings = () => {
     setIsBatchScheduling(true);
     setBatchResult(null);
     try {
+      const { events, hasMore } = await fetchFutureCalendarEventsForCurrentUser();
       const response = await fetch(`${getApiUrl()}/s/batch-schedule-bots`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${getToken()}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ events, hasMore }),
       });
       const data = await response.json();
       setBatchResult({

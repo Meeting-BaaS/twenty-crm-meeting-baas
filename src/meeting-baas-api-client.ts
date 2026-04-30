@@ -5,6 +5,33 @@ import { detectPlatform } from './twenty-sync-service';
 
 const logger = createLogger('meeting-baas-api');
 
+type CreateScheduledBotInput = Parameters<BaasClient<'v2'>['createScheduledBot']>[0];
+type BatchCreateScheduledBotsInput = Parameters<BaasClient<'v2'>['batchCreateScheduledBots']>[0];
+type BatchCreateScheduledBotsResponse = Awaited<
+  ReturnType<BaasClient<'v2'>['batchCreateScheduledBots']>
+>;
+type SuccessfulBatchCreateScheduledBotsResponse = Extract<
+  BatchCreateScheduledBotsResponse,
+  { success: true }
+>;
+
+const uniqueNames = (names: string[]): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const rawName of names) {
+    const name = rawName.trim();
+    if (!name) continue;
+
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(name);
+  }
+
+  return result;
+};
+
 export class MeetingBaasApiClient {
   private client: BaasClient<'v2'>;
 
@@ -21,35 +48,10 @@ export class MeetingBaasApiClient {
   }
 
   // Create a scheduled bot to join a meeting at a specific time
-  async createScheduledBot(options: {
-    meetingUrl: string;
-    joinAt: string;
-    botName?: string;
-    entryMessage?: string;
-    recordingMode?: 'speaker_view' | 'gallery_view' | 'audio_only';
-    extra?: Record<string, unknown>;
-    callbackUrl?: string;
-    callbackSecret?: string;
-  }): Promise<string> {
-    logger.debug(`scheduling bot for meeting: ${options.meetingUrl} at ${options.joinAt}`);
+  async createScheduledBot(params: CreateScheduledBotInput): Promise<string> {
+    logger.debug(`scheduling bot for meeting: ${params.meeting_url} at ${params.join_at}`);
 
-    const result = await this.client.createScheduledBot({
-      meeting_url: options.meetingUrl,
-      join_at: options.joinAt,
-      bot_name: options.botName || 'Twenty CRM Recorder',
-      transcription_enabled: true,
-      transcription_config: { provider: 'gladia' },
-      ...(options.entryMessage && { entry_message: options.entryMessage }),
-      ...(options.recordingMode && { recording_mode: options.recordingMode }),
-      ...(options.extra && { extra: options.extra }),
-      ...(options.callbackUrl && {
-        callback_enabled: true,
-        callback_config: {
-          url: options.callbackUrl,
-          ...(options.callbackSecret && { secret: options.callbackSecret }),
-        },
-      }),
-    });
+    const result = await this.client.createScheduledBot(params);
 
     if (!result.success) {
       const errorInfo = 'code' in result ? ` (${result.code})` : '';
@@ -63,34 +65,9 @@ export class MeetingBaasApiClient {
 
   // Batch-create scheduled bots (up to 100 items per call)
   async batchCreateScheduledBots(
-    items: Array<{
-      meetingUrl: string;
-      joinAt: string;
-      botName?: string;
-      recordingMode?: 'speaker_view' | 'gallery_view' | 'audio_only';
-      extra?: Record<string, unknown>;
-      callbackUrl?: string;
-      callbackSecret?: string;
-    }>,
-  ): Promise<{ botIds: string[]; errors: Array<{ index: number; code: string; message: string }> }> {
-    logger.debug(`batch scheduling ${items.length} bots`);
-
-    const params = items.map((item) => ({
-      meeting_url: item.meetingUrl,
-      join_at: item.joinAt,
-      bot_name: item.botName || 'Twenty CRM Recorder',
-      transcription_enabled: true,
-      transcription_config: { provider: 'gladia' as const },
-      ...(item.recordingMode && { recording_mode: item.recordingMode }),
-      ...(item.extra && { extra: item.extra }),
-      ...(item.callbackUrl && {
-        callback_enabled: true as const,
-        callback_config: {
-          url: item.callbackUrl,
-          ...(item.callbackSecret && { secret: item.callbackSecret }),
-        },
-      }),
-    }));
+    params: BatchCreateScheduledBotsInput,
+  ): Promise<SuccessfulBatchCreateScheduledBotsResponse> {
+    logger.debug(`batch scheduling ${params.length} bots`);
 
     const result = await this.client.batchCreateScheduledBots(params);
 
@@ -99,15 +76,8 @@ export class MeetingBaasApiClient {
       throw new Error(`Meeting BaaS batch API error${errorInfo}: ${result.error}`);
     }
 
-    const botIds = result.data.map((d) => d.bot_id);
-    const errors = result.errors.map((e) => ({
-      index: e.index,
-      code: e.code,
-      message: e.message,
-    }));
-
-    logger.debug(`batch result: ${botIds.length} created, ${errors.length} failed`);
-    return { botIds, errors };
+    logger.debug(`batch result: ${result.data.length} created, ${result.errors.length} failed`);
+    return result;
   }
 
   // Fetch bot details including fresh presigned artifact URLs (valid for 4 hours)
@@ -144,6 +114,14 @@ export class MeetingBaasApiClient {
     const meetingUrl = (extraData.meeting_url as string) || '';
     const title = (extraData.meeting_title as string) || `Recording ${new Date().toLocaleDateString()}`;
     const platform: MeetingPlatform = detectPlatform(meetingUrl);
+    const participantNames = uniqueNames([
+      ...(data.participants ?? []).flatMap((participant) =>
+        participant.display_name ? [participant.display_name, participant.name] : [participant.name],
+      ),
+      ...(data.speakers ?? []).flatMap((speaker) =>
+        speaker.display_name ? [speaker.display_name, speaker.name] : [speaker.name],
+      ),
+    ]);
 
     return {
       botId: data.bot_id,
@@ -156,6 +134,7 @@ export class MeetingBaasApiClient {
       mp4Url: data.video || '',
       meetingUrl,
       platform,
+      participantNames,
       extra: extraData,
     };
   }

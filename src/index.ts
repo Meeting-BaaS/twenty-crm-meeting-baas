@@ -1,5 +1,10 @@
 // SDK entity definitions (discovered automatically by twenty app build)
-export { default as RecordingObject, RECORDING_UNIVERSAL_IDENTIFIER } from './objects/recording';
+export {
+  default as RecordingObject,
+  RECORDING_UNIVERSAL_IDENTIFIER,
+  PARTICIPANT_NAMES_FIELD_ID,
+  PARTICIPANT_EMAILS_FIELD_ID,
+} from './objects/recording';
 
 // Fields on standard objects
 export { default as RecordingPreferenceField } from './fields/recording-preference-on-workspace-member.field';
@@ -16,18 +21,19 @@ export { default as OnCalendarEventUpdated } from './logic-functions/on-calendar
 // Logic functions (HTTP-triggered)
 export { default as BatchScheduleBots } from './logic-functions/batch-schedule-bots';
 export { default as BackfillRecordingFiles } from './logic-functions/backfill-recording-files';
+export { default as RecordingVideo } from './logic-functions/recording-video';
+
+// Logic functions (cron-triggered)
+export { default as DailySchedulePending } from './logic-functions/daily-schedule-pending';
+
+// Batch scheduling
+export { processPendingSchedules } from './logic-functions/process-pending-schedules';
+export { qualifyEventForScheduling, createPendingRecording } from './logic-functions/schedule-bot';
+export type { QualifiedEvent } from './logic-functions/schedule-bot';
 
 // Types
-export { WebhookEvent } from './types';
 export type {
-  BotWebhookCompleted,
-  BotWebhookCompletedData,
-  BotWebhookFailed,
-  BotWebhookFailedData,
-  BotWebhookStatusChange,
-  BotWebhookStatusChangeData,
   CalendarEventOwnership,
-  MeetingBaasWebhookPayload,
   MeetingPlatform,
   ProcessResult,
   RecordingData,
@@ -45,9 +51,11 @@ export { generateSummary } from './generate-summary';
 
 // Sync service
 export {
+  checkIfActiveRecordingExistsForEvent,
   checkIfRecordingExists,
   checkIfRecordingExistsForEvent,
   detectPlatform,
+  getRecordingStatusByCalendarEvent,
   resolveCalendarEventOwner,
   syncBotRecording,
   upsertRecording,
@@ -62,9 +70,8 @@ export { STORE_RECORDINGS_LOCALLY_VARIABLE_KEY } from './application-config';
 
 // Utilities
 export { createLogger } from './logger';
-export { getApiUrl, getRestApiUrl, restHeaders } from './utils';
+export { getApiToken, getApiUrl, getRestApiUrl, restHeaders } from './utils';
 export {
-  WebhookPayloadSchema,
   getApiKeyFingerprint,
   parseWebhookPayload,
   verifyWebhookApiKey,

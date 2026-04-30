@@ -4,7 +4,7 @@ import {
   RelationType,
   OnDeleteAction,
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
-} from 'twenty-sdk';
+} from 'twenty-sdk/define';
 import { RECORDING_UNIVERSAL_IDENTIFIER } from '../objects/recording';
 
 export const CALENDAR_EVENT_ON_RECORDING_ID = '29fe48d1-7e7d-4253-9fea-0a876c2c116d';

@@ -1,12 +1,11 @@
-import axios from 'axios';
 import {
   defineLogicFunction,
   type DatabaseEventPayload,
   type ObjectRecordUpdateEvent,
-} from 'twenty-sdk';
+} from 'twenty-sdk/define';
 import { createLogger } from '../logger';
-import { buildRestUrl } from '../utils';
-import { scheduleBot } from './schedule-bot';
+import { checkIfActiveRecordingExistsForEvent } from '../twenty-sync-service';
+import { createPendingRecording } from './schedule-bot';
 
 const logger = createLogger('on-calendar-event-updated');
 
@@ -15,31 +14,12 @@ type CalendarEvent = {
     primaryLinkUrl?: string;
   };
   startsAt?: string;
+  title?: string;
 };
 
 type CalendarEventUpdatedEvent = DatabaseEventPayload<
   ObjectRecordUpdateEvent<CalendarEvent>
 >;
-
-const TWENTY_API_KEY = process.env.TWENTY_API_KEY ?? '';
-
-// Check if a recording is already linked to this calendar event
-const hasExistingRecording = async (calendarEventId: string): Promise<boolean> => {
-  try {
-    const url = buildRestUrl('recordings', {
-      filter: { calendarEventId: { eq: calendarEventId } },
-      limit: 1,
-    });
-    const response = await axios.get(url, {
-      headers: { Authorization: `Bearer ${TWENTY_API_KEY}` },
-    });
-    const recordings: Record<string, unknown>[] =
-      response.data?.data?.recordings ?? [];
-    return recordings.length > 0;
-  } catch {
-    return false;
-  }
-};
 
 const handler = async (
   event: CalendarEventUpdatedEvent,
@@ -47,6 +27,7 @@ const handler = async (
   const { properties, recordId } = event;
   const conferenceLink = properties.after?.conferenceLink?.primaryLinkUrl;
   const startsAt = properties.after?.startsAt;
+  const title = properties.after?.title;
 
   if (!conferenceLink) {
     return { skipped: true, reason: 'no conference link after update' };
@@ -56,18 +37,23 @@ const handler = async (
     return { skipped: true, reason: 'no start time' };
   }
 
-  // Check if a recording or bot is already associated with this event
-  const alreadyRecorded = await hasExistingRecording(recordId);
-  if (alreadyRecorded) {
-    return { skipped: true, reason: 'recording already exists for this calendar event' };
+  // Dedup: skip if an active (non-FAILED) recording already exists for this event
+  const alreadyExists = await checkIfActiveRecordingExistsForEvent(recordId);
+  if (alreadyExists) {
+    return { skipped: true, reason: 'active recording already exists for this calendar event' };
   }
 
   try {
-    const botId = await scheduleBot(recordId, conferenceLink, startsAt);
-    if (!botId) {
-      return { skipped: true, reason: 'bot not scheduled (preference or config)' };
+    const recordingId = await createPendingRecording(recordId);
+    if (!recordingId) {
+      return { skipped: true, reason: 'failed to create pending recording' };
     }
-    return { scheduled: true, botId, calendarEventId: recordId };
+
+    return {
+      queued: true,
+      recordingId,
+      calendarEventId: recordId,
+    };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.warn(`Failed to schedule bot for updated calendar event ${recordId}: ${msg}`);

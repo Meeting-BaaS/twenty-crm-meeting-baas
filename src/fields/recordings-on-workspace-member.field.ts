@@ -3,7 +3,7 @@ import {
   FieldType,
   RelationType,
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
-} from 'twenty-sdk';
+} from 'twenty-sdk/define';
 import { RECORDING_UNIVERSAL_IDENTIFIER } from '../objects/recording';
 import {
   WORKSPACE_MEMBER_ON_RECORDING_ID,

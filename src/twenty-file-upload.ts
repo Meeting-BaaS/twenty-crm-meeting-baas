@@ -1,12 +1,139 @@
 import { createLogger } from './logger';
-import { getApiUrl, restHeaders } from './utils';
-import { VIDEO_FILE_FIELD_ID } from './objects/recording';
+import { MetadataApiClient, type MetadataSchema } from 'twenty-client-sdk/metadata';
+import { getApiToken, getApiUrl, restHeaders } from './utils';
+import {
+  RECORDING_UNIVERSAL_IDENTIFIER,
+  VIDEO_FILE_FIELD_ID,
+} from './objects/recording';
 
 const logger = createLogger('file-upload');
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
+const VIDEO_FILE_FIELD_NAME = 'videoFile';
+const GENERATED_VIDEO_FILE_FIELD_ID = 'cd3ea26e-b8e3-53ab-b0bf-68f1df262b8e';
 
 const getGraphQLUrl = (): string => `${getApiUrl()}/graphql`;
+
+let videoFileFieldUniversalIdentifierPromise: Promise<string> | null = null;
+
+const getMetadataClient = (): MetadataApiClient =>
+  new MetadataApiClient({
+    url: `${getApiUrl()}/metadata`,
+    headers: {
+      Authorization: `Bearer ${getApiToken()}`,
+    },
+  });
+
+const fetchRecordingObjectMetadata = async (
+  client: MetadataApiClient,
+): Promise<{
+  id: string;
+  fieldsList: Array<{ name: string; universalIdentifier: string }>;
+}> => {
+  const response = await client.query({
+    objects: {
+      __args: {
+        paging: { first: 200 },
+        filter: { isActive: { eq: true } },
+      },
+      edges: {
+        node: {
+          id: true,
+          universalIdentifier: true,
+          fieldsList: {
+            name: true,
+            universalIdentifier: true,
+          },
+        },
+      },
+    },
+  });
+
+  const objects = response.objects?.edges
+    ?.map((edge) => edge?.node)
+    .filter((node): node is NonNullable<typeof node> => !!node) ?? [];
+
+  const recordingObject = objects.find(
+    (node) => node.universalIdentifier === RECORDING_UNIVERSAL_IDENTIFIER,
+  );
+
+  if (!recordingObject?.id) {
+    throw new Error('Recording object metadata not found');
+  }
+
+  return {
+    id: recordingObject.id,
+    fieldsList:
+      recordingObject.fieldsList?.flatMap((field) =>
+        field?.name && field?.universalIdentifier
+          ? [{ name: field.name, universalIdentifier: field.universalIdentifier }]
+          : [],
+      ) ?? [],
+  };
+};
+
+const ensureVideoFileFieldUniversalIdentifier = async (): Promise<string> => {
+  if (videoFileFieldUniversalIdentifierPromise) {
+    return videoFileFieldUniversalIdentifierPromise;
+  }
+
+  videoFileFieldUniversalIdentifierPromise = (async () => {
+    const client = getMetadataClient();
+    const recordingObject = await fetchRecordingObjectMetadata(client);
+
+    const existingField = recordingObject.fieldsList.find(
+      (field) =>
+        field.name === VIDEO_FILE_FIELD_NAME &&
+        (field.universalIdentifier === VIDEO_FILE_FIELD_ID ||
+          field.universalIdentifier === GENERATED_VIDEO_FILE_FIELD_ID),
+    ) ?? recordingObject.fieldsList.find((field) => field.name === VIDEO_FILE_FIELD_NAME);
+
+    if (existingField?.universalIdentifier) {
+      return existingField.universalIdentifier;
+    }
+
+    const created = await client.mutation({
+      createOneField: {
+        __args: {
+          input: {
+            field: {
+              objectMetadataId: recordingObject.id,
+              type: 'FILES' as MetadataSchema.FieldMetadataType,
+              name: VIDEO_FILE_FIELD_NAME,
+              label: 'Video File',
+              description: 'Stored Meeting BaaS recording video file',
+              icon: 'IconFile',
+              isCustom: true,
+              isActive: true,
+              isNullable: true,
+              settings: {
+                maxNumberOfValues: 1,
+              },
+            },
+          },
+        },
+        universalIdentifier: true,
+        name: true,
+      },
+    });
+
+    const createdField = created.createOneField;
+    if (!createdField?.universalIdentifier) {
+      throw new Error('Failed to create videoFile field');
+    }
+
+    logger.debug(
+      `created recording video field name=${createdField.name} universalIdentifier=${createdField.universalIdentifier}`,
+    );
+
+    return createdField.universalIdentifier;
+  })().catch((error) => {
+    videoFileFieldUniversalIdentifierPromise = null;
+    throw error;
+  });
+
+  return videoFileFieldUniversalIdentifierPromise;
+};
 
 /**
  * Upload a file buffer to Twenty's file storage via GraphQL multipart upload.
@@ -19,7 +146,7 @@ const uploadFileToTwenty = async (
   fieldUniversalIdentifier: string,
 ): Promise<string> => {
   const graphqlUrl = getGraphQLUrl();
-  const apiKey = process.env.TWENTY_API_KEY ?? '';
+  const apiKey = getApiToken();
 
   const operations = JSON.stringify({
     query: `
@@ -133,11 +260,12 @@ export const downloadAndStoreRecording = async (
 
     // Upload to Twenty's file storage
     const fileName = `recording-${recordingId}.mp4`;
+    const fieldUniversalIdentifier = await ensureVideoFileFieldUniversalIdentifier();
     const fileId = await uploadFileToTwenty(
       buffer,
       fileName,
       'video/mp4',
-      VIDEO_FILE_FIELD_ID,
+      fieldUniversalIdentifier,
     );
 
     logger.debug(`uploaded file id=${fileId}, linking to recording`);

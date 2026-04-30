@@ -1,9 +1,10 @@
 import axios from 'axios';
-import { defineLogicFunction } from 'twenty-sdk';
+import { defineLogicFunction } from 'twenty-sdk/define';
 import { MeetingBaasApiClient } from '../meeting-baas-api-client';
 import { downloadAndStoreRecording } from '../twenty-file-upload';
 import { createLogger } from '../logger';
 import { buildRestUrl, getRestApiUrl, restHeaders } from '../utils';
+import { getRecordingVideoProxyUrl } from '../workspace-webhook-url';
 
 const logger = createLogger('backfill-recording-files');
 
@@ -118,8 +119,10 @@ export default defineLogicFunction({
           continue;
         }
 
-        // Update the mp4Url LINKS field with the fresh presigned URL
-        await updateRecordingMp4Url(recording.id, details.video);
+        // Set the proxy URL so the link auto-refreshes on click;
+        // fall back to the raw presigned URL if proxy is unavailable
+        const proxyUrl = getRecordingVideoProxyUrl(recording.botId!);
+        await updateRecordingMp4Url(recording.id, proxyUrl ?? details.video);
         result.refreshed++;
         logger.debug(`recording ${recording.id}: mp4Url refreshed`);
 

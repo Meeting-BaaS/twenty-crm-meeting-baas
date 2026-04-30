@@ -1,24 +1,3 @@
-// SDK V2 types
-import type { V2 } from '@meeting-baas/sdk';
-
-export type BotWebhookCompleted = V2.BotWebhookCompleted;
-export type BotWebhookCompletedData = V2.BotWebhookCompletedData;
-export type BotWebhookFailed = V2.BotWebhookFailed;
-export type BotWebhookFailedData = V2.BotWebhookFailedData;
-export type BotWebhookStatusChange = V2.BotWebhookStatusChange;
-export type BotWebhookStatusChangeData = V2.BotWebhookStatusChangeData;
-
-export type MeetingBaasWebhookPayload =
-  | BotWebhookCompleted
-  | BotWebhookFailed
-  | BotWebhookStatusChange;
-
-export const WebhookEvent = {
-  COMPLETED: 'bot.completed' as BotWebhookCompleted['event'],
-  FAILED: 'bot.failed' as BotWebhookFailed['event'],
-  STATUS_CHANGE: 'bot.status_change' as BotWebhookStatusChange['event'],
-} as const;
-
 // Meeting platform types
 export type MeetingPlatform =
   | 'GOOGLE_MEET'
@@ -38,6 +17,7 @@ export type RecordingData = {
   mp4Url: string;
   meetingUrl: string;
   platform: MeetingPlatform;
+  participantNames: string[];
   extra: Record<string, unknown>;
 };
 
@@ -50,7 +30,7 @@ export type ProcessResult = {
 };
 
 // Recording status
-export type RecordingStatus = 'COMPLETED' | 'FAILED' | 'IN_PROGRESS' | 'SCHEDULED';
+export type RecordingStatus = 'COMPLETED' | 'FAILED' | 'IN_PROGRESS' | 'PENDING_SCHEDULE' | 'SCHEDULED';
 
 // Recording upsert input for the REST API
 export type RecordingUpsertInput = {
@@ -64,6 +44,8 @@ export type RecordingUpsertInput = {
   mp4Url: { primaryLinkLabel: string; primaryLinkUrl: string; secondaryLinks: null } | null;
   transcript: string;
   summary?: string;
+  participantNames?: string;
+  participantEmails?: string;
   calendarEventId?: string;
   workspaceMemberId?: string;
 };

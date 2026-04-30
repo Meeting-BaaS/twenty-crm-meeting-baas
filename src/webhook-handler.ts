@@ -1,9 +1,8 @@
 import { createLogger } from './logger';
 import { generateSummary } from './generate-summary';
 import { MeetingBaasApiClient } from './meeting-baas-api-client';
-import type { BotWebhookCompletedData, ProcessResult, SyncResult } from './types';
+import type { ProcessResult, SyncResult } from './types';
 import {
-  getApiKeyFingerprint,
   parseWebhookPayload,
   verifyWebhookApiKey
 } from './webhook-validator';
@@ -41,10 +40,11 @@ export class WebhookHandler {
 
       this.logger.debug(`payload event=${payload.event} bot_id=${payload.data.bot_id}`);
 
-      this.logger.debug(`API key fingerprint=${getApiKeyFingerprint(meetingBaasApiKey)}`);
-      this.logger.debug(`headers received: ${JSON.stringify(Object.keys(finalHeaders ?? {}))}`);
-      this.verifyApiKey(finalHeaders, meetingBaasApiKey);
-      this.logger.debug('API key verification: ok');
+      // Verify x-mb-secret before processing the webhook payload.
+      const verification = verifyWebhookApiKey(finalHeaders, meetingBaasApiKey);
+      if (!verification.isValid) {
+        throw new Error('Invalid webhook API key');
+      }
 
       if (payload.event === 'bot.failed') {
         const failedData = payload.data;
@@ -78,10 +78,9 @@ export class WebhookHandler {
       }
 
       // bot.completed — transform, fetch transcript, summarize, sync
-      const completedData = payload.data as BotWebhookCompletedData;
       const meetingBaasClient = new MeetingBaasApiClient(meetingBaasApiKey);
       const recordingData = meetingBaasClient.transformWebhookData(
-        completedData,
+        payload.data,
         payload.extra ?? undefined,
       );
 
@@ -112,6 +111,12 @@ export class WebhookHandler {
         errors: [],
       };
 
+      // Store the presigned URL directly — it's valid for ~4 hours.
+      // Twenty logic functions can't return HTTP 302 redirects, so a proxy
+      // endpoint doesn't help. The recording-video endpoint can refresh an
+      // expired URL on demand.
+      const mp4UrlForSync = recordingData.mp4Url;
+
       const recordingId = await syncBotRecording(
         {
           botId: recordingData.botId,
@@ -120,9 +125,10 @@ export class WebhookHandler {
           duration: recordingData.duration,
           transcript: recordingData.transcript,
           summary: summary ?? undefined,
-          mp4Url: recordingData.mp4Url,
+          mp4Url: mp4UrlForSync,
           meetingUrl: recordingData.meetingUrl,
           platform: recordingData.platform,
+          participantNames: recordingData.participantNames,
           calendarEventId,
           workspaceMemberId,
         },
@@ -154,16 +160,5 @@ export class WebhookHandler {
     }
 
     return result;
-  }
-
-  private verifyApiKey(
-    headers: Record<string, string> | undefined,
-    expectedApiKey: string
-  ): void {
-    const verification = verifyWebhookApiKey(headers, expectedApiKey);
-    if (!verification.isValid) {
-      this.logger.critical(`Webhook auth failed: ${verification.reason}`);
-      throw new Error('Invalid webhook API key');
-    }
   }
 }

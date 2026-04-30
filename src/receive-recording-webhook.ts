@@ -1,4 +1,4 @@
-import { defineLogicFunction } from 'twenty-sdk';
+import { defineLogicFunction } from 'twenty-sdk/define';
 import type { ProcessResult } from './types';
 import { WebhookHandler } from './webhook-handler';
 

@@ -55,3 +55,11 @@ export const getMeetingBaasCallbackUrl = (): string | null => {
 
   return baseUrl ? `${baseUrl}/s/webhook/meeting-baas` : null;
 };
+
+export const getRecordingVideoProxyUrl = (botId: string): string | null => {
+  const baseUrl = getWorkspaceWebhookBaseUrl();
+
+  return baseUrl
+    ? `${baseUrl}/s/recording-video?botId=${encodeURIComponent(botId)}`
+    : null;
+};

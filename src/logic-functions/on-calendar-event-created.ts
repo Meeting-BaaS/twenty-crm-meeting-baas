@@ -2,9 +2,10 @@ import {
   defineLogicFunction,
   type DatabaseEventPayload,
   type ObjectRecordCreateEvent,
-} from 'twenty-sdk';
+} from 'twenty-sdk/define';
 import { createLogger } from '../logger';
-import { scheduleBot } from './schedule-bot';
+import { checkIfActiveRecordingExistsForEvent } from '../twenty-sync-service';
+import { createPendingRecording } from './schedule-bot';
 
 const logger = createLogger('on-calendar-event-created');
 
@@ -13,6 +14,7 @@ type CalendarEvent = {
     primaryLinkUrl?: string;
   };
   startsAt?: string;
+  title?: string;
 };
 
 type CalendarEventCreatedEvent = DatabaseEventPayload<
@@ -25,8 +27,9 @@ const handler = async (
   const { properties, recordId } = event;
   const conferenceLink = properties.after?.conferenceLink?.primaryLinkUrl;
   const startsAt = properties.after?.startsAt;
+  const title = properties.after?.title;
 
-  console.error(`[on-calendar-event-created] recordId=${recordId} conferenceLink=${conferenceLink} startsAt=${startsAt}`);
+  console.error(`[on-calendar-event-created] recordId=${recordId} conferenceLink=${conferenceLink} startsAt=${startsAt} title=${title}`);
 
   if (!conferenceLink) {
     console.error(`[on-calendar-event-created] EXIT: no conference link`);
@@ -38,14 +41,25 @@ const handler = async (
     return { skipped: true, reason: 'no start time' };
   }
 
+  // Dedup: skip if an active (non-FAILED) recording already exists for this event
+  const alreadyExists = await checkIfActiveRecordingExistsForEvent(recordId);
+  if (alreadyExists) {
+    console.error(`[on-calendar-event-created] EXIT: active recording already exists`);
+    return { skipped: true, reason: 'active recording already exists for this calendar event' };
+  }
+
   try {
-    const botId = await scheduleBot(recordId, conferenceLink, startsAt);
-    if (!botId) {
-      console.error(`[on-calendar-event-created] EXIT: scheduleBot returned null`);
-      return { skipped: true, reason: 'bot not scheduled (preference or config)' };
+    const recordingId = await createPendingRecording(recordId);
+    if (!recordingId) {
+      console.error(`[on-calendar-event-created] EXIT: failed to create pending recording`);
+      return { skipped: true, reason: 'failed to create pending recording' };
     }
-    console.error(`[on-calendar-event-created] SUCCESS: botId=${botId}`);
-    return { scheduled: true, botId, calendarEventId: recordId };
+
+    return {
+      queued: true,
+      recordingId,
+      calendarEventId: recordId,
+    };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`[on-calendar-event-created] ERROR: ${msg}`);

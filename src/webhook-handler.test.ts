@@ -4,6 +4,8 @@ import { WebhookHandler } from './webhook-handler';
 const mocks = vi.hoisted(() => ({
   generateSummary: vi.fn(),
   syncBotRecording: vi.fn(),
+  checkIfRecordingExists: vi.fn(),
+  upsertRecordingStatus: vi.fn(),
   transformWebhookData: vi.fn(),
   fetchTranscript: vi.fn(),
   meetingBaasConstructor: vi.fn(),
@@ -15,6 +17,8 @@ vi.mock('./generate-summary', () => ({
 
 vi.mock('./twenty-sync-service', () => ({
   syncBotRecording: mocks.syncBotRecording,
+  checkIfRecordingExists: mocks.checkIfRecordingExists,
+  upsertRecordingStatus: mocks.upsertRecordingStatus,
 }));
 
 vi.mock('./meeting-baas-api-client', () => ({
@@ -64,6 +68,7 @@ describe('WebhookHandler', () => {
       mp4Url: 'https://example.com/recording.mp4',
       meetingUrl: 'https://meet.google.com/abc-defg-hij',
       platform: 'GOOGLE_MEET',
+      participantNames: ['Alice Example', 'Bob Example'],
       extra: {
         calendarEventId: 'calendar-event-1',
         workspaceMemberId: 'workspace-member-1',
@@ -72,6 +77,8 @@ describe('WebhookHandler', () => {
     mocks.fetchTranscript.mockResolvedValue('Speaker A: Hello\nSpeaker B: Hi');
     mocks.generateSummary.mockResolvedValue('Summary text');
     mocks.syncBotRecording.mockResolvedValue('recording-123');
+    mocks.checkIfRecordingExists.mockResolvedValue(null);
+    mocks.upsertRecordingStatus.mockResolvedValue(undefined);
   });
 
   it('processes a completed webhook authenticated with x-mb-secret', async () => {
@@ -97,6 +104,7 @@ describe('WebhookHandler', () => {
         title: 'Test Recording',
         transcript: 'Speaker A: Hello\nSpeaker B: Hi',
         summary: 'Summary text',
+        participantNames: ['Alice Example', 'Bob Example'],
         calendarEventId: 'calendar-event-1',
         workspaceMemberId: 'workspace-member-1',
       }),
