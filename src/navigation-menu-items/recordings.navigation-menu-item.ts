@@ -1,4 +1,4 @@
-import { defineNavigationMenuItem, NavigationMenuItemType } from 'twenty-sdk';
+import { defineNavigationMenuItem, NavigationMenuItemType } from 'twenty-sdk/define';
 import { RECORDING_UNIVERSAL_IDENTIFIER } from '../objects/recording';
 
 export default defineNavigationMenuItem({

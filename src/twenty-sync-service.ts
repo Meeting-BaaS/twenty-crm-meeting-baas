@@ -2,14 +2,14 @@ import axios from 'axios';
 import type {
   CalendarEventOwnership,
   MeetingPlatform,
+  RecordingStatus,
   RecordingUpsertInput,
   SyncResult,
 } from './types';
-import { buildRestUrl, getRestApiUrl, restHeaders } from './utils';
+import { buildRestUrl, getApiToken, getRestApiUrl, restHeaders } from './utils';
+import { getRecordingVideoProxyUrl } from './workspace-webhook-url';
 
-const TWENTY_API_KEY: string = process.env.TWENTY_API_KEY ?? '';
-
-const authHeaders = () => ({ Authorization: `Bearer ${TWENTY_API_KEY}` });
+const authHeaders = () => ({ Authorization: `Bearer ${getApiToken()}` });
 
 // --- REST API response types ---
 
@@ -20,6 +20,130 @@ type TwentyListResponse<T extends string> = {
 type TwentyDetailResponse = {
   data?: Record<string, unknown>;
   id?: string;
+};
+
+type CalendarParticipantDetails = {
+  names: string[];
+  emails: string[];
+};
+
+const uniqueStrings = (values: string[]): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const rawValue of values) {
+    const value = rawValue.trim();
+    if (!value) continue;
+
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+
+  return result;
+};
+
+const joinMultiValueField = (values: string[]): string | undefined => {
+  const unique = uniqueStrings(values);
+  return unique.length > 0 ? unique.join('\n') : undefined;
+};
+
+const extractParticipantNames = (participant: Record<string, unknown>): string[] => {
+  const names: string[] = [];
+
+  const directName = participant.name;
+  if (typeof directName === 'string') names.push(directName);
+
+  const handle = participant.handle;
+  if (typeof handle === 'string') names.push(handle);
+
+  const person = participant.person;
+  if (person && typeof person === 'object' && !Array.isArray(person)) {
+    const personRecord = person as Record<string, unknown>;
+    const personName = personRecord.name;
+    if (personName && typeof personName === 'object' && !Array.isArray(personName)) {
+      const personNameRecord = personName as Record<string, unknown>;
+      const firstName = typeof personNameRecord.firstName === 'string' ? personNameRecord.firstName : '';
+      const lastName = typeof personNameRecord.lastName === 'string' ? personNameRecord.lastName : '';
+      const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+      if (fullName) names.push(fullName);
+    }
+  }
+
+  return uniqueStrings(names);
+};
+
+const extractParticipantEmails = (participant: Record<string, unknown>): string[] => {
+  const emails: string[] = [];
+
+  const directEmail = participant.email;
+  if (typeof directEmail === 'string') emails.push(directEmail);
+
+  const directEmails = participant.emails;
+  if (directEmails && typeof directEmails === 'object' && !Array.isArray(directEmails)) {
+    const directEmailsRecord = directEmails as Record<string, unknown>;
+    if (typeof directEmailsRecord.primaryEmail === 'string') {
+      emails.push(directEmailsRecord.primaryEmail);
+    }
+    const additionalEmails = directEmailsRecord.additionalEmails;
+    if (Array.isArray(additionalEmails)) {
+      emails.push(
+        ...additionalEmails.filter((email): email is string => typeof email === 'string'),
+      );
+    }
+  }
+
+  const person = participant.person;
+  if (person && typeof person === 'object' && !Array.isArray(person)) {
+    const personRecord = person as Record<string, unknown>;
+    const personEmails = personRecord.emails;
+    if (personEmails && typeof personEmails === 'object' && !Array.isArray(personEmails)) {
+      const personEmailsRecord = personEmails as Record<string, unknown>;
+      if (typeof personEmailsRecord.primaryEmail === 'string') {
+        emails.push(personEmailsRecord.primaryEmail);
+      }
+      const additionalEmails = personEmailsRecord.additionalEmails;
+      if (Array.isArray(additionalEmails)) {
+        emails.push(
+          ...additionalEmails.filter((email): email is string => typeof email === 'string'),
+        );
+      }
+    }
+  }
+
+  return uniqueStrings(emails);
+};
+
+const fetchCalendarParticipantDetails = async (
+  calendarEventId: string,
+): Promise<CalendarParticipantDetails> => {
+  try {
+    const url = buildRestUrl('calendarEventParticipants', {
+      filter: { calendarEventId: { eq: calendarEventId } },
+      limit: 50,
+    });
+    const response = await axios.get<TwentyListResponse<'calendarEventParticipants'>>(
+      url,
+      { headers: authHeaders() },
+    );
+    const participants = response.data?.data?.calendarEventParticipants ?? [];
+
+    return {
+      names: uniqueStrings(
+        participants.flatMap((participant) =>
+          extractParticipantNames(participant as Record<string, unknown>),
+        ),
+      ),
+      emails: uniqueStrings(
+        participants.flatMap((participant) =>
+          extractParticipantEmails(participant as Record<string, unknown>),
+        ),
+      ),
+    };
+  } catch {
+    return { names: [], emails: [] };
+  }
 };
 
 // --- Platform Detection ---
@@ -257,6 +381,72 @@ export const checkIfRecordingExistsForEvent = async (
   }
 };
 
+export const checkIfActiveRecordingExistsForEvent = async (
+  calendarEventId: string,
+): Promise<boolean> => {
+  try {
+    const url = buildRestUrl('recordings', {
+      filter: {
+        calendarEventId: { eq: calendarEventId },
+        status: { neq: 'FAILED' },
+      },
+      limit: 1,
+    });
+    const response = await axios.get<TwentyListResponse<'recordings'>>(url, {
+      headers: authHeaders(),
+    });
+    const recordings = response.data?.data?.recordings ?? [];
+    return recordings.length > 0;
+  } catch {
+    return false;
+  }
+};
+
+// Like checkIfActiveRecordingExistsForEvent but ignores PENDING_SCHEDULE.
+// Used by scheduleBot to avoid being blocked by its own pending record while
+// still catching SCHEDULED/COMPLETED recordings from concurrent triggers.
+export const checkIfScheduledRecordingExistsForEvent = async (
+  calendarEventId: string,
+): Promise<boolean> => {
+  try {
+    const url = buildRestUrl('recordings', {
+      filter: {
+        calendarEventId: { eq: calendarEventId },
+        status: { neq: 'FAILED' },
+      },
+      limit: 10,
+    });
+    const response = await axios.get<TwentyListResponse<'recordings'>>(url, {
+      headers: authHeaders(),
+    });
+    const recordings = response.data?.data?.recordings ?? [];
+    return recordings.some(r => r.status !== 'PENDING_SCHEDULE');
+  } catch {
+    return false;
+  }
+};
+
+export const getRecordingStatusByCalendarEvent = async (
+  calendarEventId: string,
+): Promise<RecordingStatus | null> => {
+  try {
+    const url = buildRestUrl('recordings', {
+      filter: {
+        calendarEventId: { eq: calendarEventId },
+        status: { neq: 'FAILED' },
+      },
+      limit: 1,
+    });
+    const response = await axios.get<TwentyListResponse<'recordings'>>(url, {
+      headers: authHeaders(),
+    });
+    const recordings = response.data?.data?.recordings ?? [];
+    return (recordings[0]?.status as RecordingStatus) ?? null;
+  } catch {
+    return null;
+  }
+};
+
 export const checkIfRecordingExists = async (
   botId: string,
 ): Promise<string | null> => {
@@ -274,21 +464,61 @@ export const checkIfRecordingExists = async (
   }
 };
 
+const findPendingRecordingIdByCalendarEvent = async (
+  calendarEventId: string,
+): Promise<string | null> => {
+  const url = buildRestUrl('recordings', {
+    filter: {
+      calendarEventId: { eq: calendarEventId },
+      status: { eq: 'PENDING_SCHEDULE' },
+    },
+    limit: 1,
+  });
+  const response = await axios.get<TwentyListResponse<'recordings'>>(url, {
+    headers: authHeaders(),
+  });
+  const recording = response.data?.data?.recordings?.[0];
+  return (recording?.id as string) ?? null;
+};
+
+export const upsertRecordingStatus = async (
+  recordingId: string,
+  status: RecordingStatus,
+): Promise<void> => {
+  await axios({
+    method: 'PATCH',
+    headers: restHeaders(),
+    url: `${getRestApiUrl()}/recordings/${recordingId}`,
+    data: { status },
+  });
+};
+
 export const upsertRecording = async (
   opts: RecordingUpsertInput,
 ): Promise<string | null> => {
-  const existingId = await checkIfRecordingExists(opts.botId);
+  const normalizedBotId = opts.botId.trim();
+  let existingId: string | null = null;
+
+  if (normalizedBotId) {
+    existingId = await checkIfRecordingExists(normalizedBotId);
+  }
+
+  if (!existingId && opts.calendarEventId) {
+    existingId = await findPendingRecordingIdByCalendarEvent(opts.calendarEventId);
+  }
 
   const data: Record<string, unknown> = {
     name: opts.name,
-    botId: opts.botId,
-    date: opts.date,
+    botId: normalizedBotId,
+    date: opts.date || null,
     duration: opts.duration,
     platform: opts.platform,
     status: opts.status,
     transcript: opts.transcript,
   };
   if (opts.summary) data.summary = opts.summary;
+  if (opts.participantNames) data.participantNames = opts.participantNames;
+  if (opts.participantEmails) data.participantEmails = opts.participantEmails;
   if (opts.meetingUrl) data.meetingUrl = opts.meetingUrl;
   if (opts.mp4Url) data.mp4Url = opts.mp4Url;
   if (opts.calendarEventId) data.calendarEventId = opts.calendarEventId;
@@ -310,7 +540,12 @@ export const upsertRecording = async (
     url: `${getRestApiUrl()}/recordings`,
     data,
   });
-  const id = response.data?.data?.id ?? response.data?.id;
+  // Twenty REST API POST response: { data: { createRecording: { id, ... } } }
+  const responseData = response.data;
+  const inner = responseData?.data ?? responseData;
+  // The key is the GraphQL mutation name (e.g. "createRecording")
+  const record = inner?.createRecording ?? inner?.recording ?? inner;
+  const id = record?.id ?? null;
   return id ? (id as string) : null;
 };
 
@@ -329,6 +564,7 @@ export const syncBotRecording = async (
     mp4Url: string;
     meetingUrl: string;
     platform: MeetingPlatform;
+    participantNames: string[];
     calendarEventId?: string;
     workspaceMemberId?: string;
   },
@@ -336,6 +572,14 @@ export const syncBotRecording = async (
 ): Promise<string | null> => {
   try {
     const durationMinutes = Math.round(recordingData.duration / 60);
+    const calendarParticipants = recordingData.calendarEventId
+      ? await fetchCalendarParticipantDetails(recordingData.calendarEventId)
+      : { names: [], emails: [] };
+    const participantNames = joinMultiValueField([
+      ...recordingData.participantNames,
+      ...calendarParticipants.names,
+    ]);
+    const participantEmails = joinMultiValueField(calendarParticipants.emails);
 
     const recordingId = await upsertRecording({
       botId: recordingData.botId,
@@ -348,10 +592,16 @@ export const syncBotRecording = async (
         ? { primaryLinkLabel: 'Join Meeting', primaryLinkUrl: recordingData.meetingUrl, secondaryLinks: null }
         : null,
       mp4Url: recordingData.mp4Url
-        ? { primaryLinkLabel: 'Watch Recording', primaryLinkUrl: recordingData.mp4Url, secondaryLinks: null }
+        ? {
+            primaryLinkLabel: 'Watch Recording',
+            primaryLinkUrl: getRecordingVideoProxyUrl(recordingData.botId) ?? recordingData.mp4Url,
+            secondaryLinks: null,
+          }
         : null,
       transcript: recordingData.transcript,
       summary: recordingData.summary,
+      participantNames,
+      participantEmails,
       calendarEventId: recordingData.calendarEventId,
       workspaceMemberId: recordingData.workspaceMemberId,
     });

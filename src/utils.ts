@@ -6,8 +6,11 @@ export const getRestApiUrl = (): string => {
   return `${getApiUrl()}/rest`;
 };
 
+export const getApiToken = (): string =>
+  process.env.TWENTY_API_KEY ?? process.env.TWENTY_APP_ACCESS_TOKEN ?? '';
+
 export const restHeaders = (): Record<string, string> => ({
-  Authorization: `Bearer ${process.env.TWENTY_API_KEY ?? ''}`,
+  Authorization: `Bearer ${getApiToken()}`,
   'Content-Type': 'application/json',
 });
 
@@ -15,7 +18,7 @@ export const restHeaders = (): Record<string, string> => ({
 // Example: buildRestUrl('recordings', { filter: { botId: { eq: 'bot-123' } }, limit: 1 })
 // → https://api.twenty.com/rest/recordings?filter=botId[eq]:"bot-123"&limit=1
 
-type FilterCondition = Partial<Record<'eq' | 'gte' | 'lte' | 'is', string>>;
+type FilterCondition = Partial<Record<'eq' | 'neq' | 'gte' | 'lte' | 'is', string>>;
 
 export const buildRestUrl = (
   resource: string,

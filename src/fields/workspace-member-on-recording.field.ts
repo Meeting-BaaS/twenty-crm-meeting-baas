@@ -4,7 +4,7 @@ import {
   RelationType,
   OnDeleteAction,
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
-} from 'twenty-sdk';
+} from 'twenty-sdk/define';
 import { RECORDING_UNIVERSAL_IDENTIFIER } from '../objects/recording';
 
 export const WORKSPACE_MEMBER_ON_RECORDING_ID = '3bb83966-51d6-41e1-9a33-5b53bc6313d9';

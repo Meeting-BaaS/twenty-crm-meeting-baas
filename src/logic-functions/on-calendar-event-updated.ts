@@ -1,45 +1,33 @@
-import axios from 'axios';
 import {
   defineLogicFunction,
   type DatabaseEventPayload,
   type ObjectRecordUpdateEvent,
-} from 'twenty-sdk';
+} from 'twenty-sdk/define';
 import { createLogger } from '../logger';
-import { buildRestUrl } from '../utils';
-import { scheduleBot } from './schedule-bot';
+import { RateLimitError } from '../meeting-baas-api-client';
+import { checkIfActiveRecordingExistsForEvent, checkIfScheduledRecordingExistsForEvent } from '../twenty-sync-service';
+import { createPendingRecording, scheduleBot } from './schedule-bot';
 
 const logger = createLogger('on-calendar-event-updated');
+
+// Meeting BaaS enforces a 90-day limit on join_at for scheduled bots.
+const MAX_SCHEDULE_AHEAD_MS = 90 * 24 * 60 * 60 * 1000;
+// Max jitter to spread concurrent scheduling calls
+const MAX_JITTER_MS = 5_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type CalendarEvent = {
   conferenceLink?: {
     primaryLinkUrl?: string;
   };
   startsAt?: string;
+  title?: string;
 };
 
 type CalendarEventUpdatedEvent = DatabaseEventPayload<
   ObjectRecordUpdateEvent<CalendarEvent>
 >;
-
-const TWENTY_API_KEY = process.env.TWENTY_API_KEY ?? '';
-
-// Check if a recording is already linked to this calendar event
-const hasExistingRecording = async (calendarEventId: string): Promise<boolean> => {
-  try {
-    const url = buildRestUrl('recordings', {
-      filter: { calendarEventId: { eq: calendarEventId } },
-      limit: 1,
-    });
-    const response = await axios.get(url, {
-      headers: { Authorization: `Bearer ${TWENTY_API_KEY}` },
-    });
-    const recordings: Record<string, unknown>[] =
-      response.data?.data?.recordings ?? [];
-    return recordings.length > 0;
-  } catch {
-    return false;
-  }
-};
 
 const handler = async (
   event: CalendarEventUpdatedEvent,
@@ -47,6 +35,7 @@ const handler = async (
   const { properties, recordId } = event;
   const conferenceLink = properties.after?.conferenceLink?.primaryLinkUrl;
   const startsAt = properties.after?.startsAt;
+  const title = properties.after?.title;
 
   if (!conferenceLink) {
     return { skipped: true, reason: 'no conference link after update' };
@@ -56,22 +45,64 @@ const handler = async (
     return { skipped: true, reason: 'no start time' };
   }
 
-  // Check if a recording or bot is already associated with this event
-  const alreadyRecorded = await hasExistingRecording(recordId);
-  if (alreadyRecorded) {
-    return { skipped: true, reason: 'recording already exists for this calendar event' };
+  // Skip past events
+  const eventTime = new Date(startsAt).getTime();
+  if (eventTime < Date.now()) {
+    return { skipped: true, reason: 'event in the past' };
   }
 
+  // Dedup: skip if an active (non-FAILED) recording already exists for this event
+  const alreadyExists = await checkIfActiveRecordingExistsForEvent(recordId);
+  if (alreadyExists) {
+    return { skipped: true, reason: 'active recording already exists for this calendar event' };
+  }
+
+  // Events beyond 90 days: only create PENDING_SCHEDULE
+  if (eventTime > Date.now() + MAX_SCHEDULE_AHEAD_MS) {
+    const recordingId = await createPendingRecording(recordId, {
+      conferenceUrl: conferenceLink,
+      startsAt,
+      title,
+    });
+    return { queued: true, recordingId, calendarEventId: recordId };
+  }
+
+  // Step 1: Create PENDING_SCHEDULE immediately
+  const pendingId = await createPendingRecording(recordId, {
+    conferenceUrl: conferenceLink,
+    startsAt,
+    title,
+  });
+
+  // Step 2: Jitter to spread concurrent requests
+  const jitter = Math.random() * MAX_JITTER_MS;
+  console.error(`[on-calendar-event-updated] jitter ${Math.round(jitter)}ms before scheduling`);
+  await sleep(jitter);
+
+  // Step 2b: After jitter, re-check: did a concurrent trigger already schedule?
+  const alreadyScheduled = await checkIfScheduledRecordingExistsForEvent(recordId);
+  if (alreadyScheduled) {
+    console.error(`[on-calendar-event-updated] EXIT: already scheduled by concurrent trigger`);
+    return { skipped: true, pendingId, reason: 'already scheduled by concurrent trigger' };
+  }
+
+  // Step 3: Try direct scheduling
   try {
     const botId = await scheduleBot(recordId, conferenceLink, startsAt);
-    if (!botId) {
-      return { skipped: true, reason: 'bot not scheduled (preference or config)' };
+
+    if (botId) {
+      return { scheduled: true, botId, pendingId, calendarEventId: recordId };
     }
-    return { scheduled: true, botId, calendarEventId: recordId };
+
+    return { skipped: true, pendingId, reason: 'no qualifying members' };
   } catch (error) {
+    if (error instanceof RateLimitError) {
+      return { deferred: true, pendingId, calendarEventId: recordId, retryAfterSeconds: error.retryAfterSeconds };
+    }
+
     const msg = error instanceof Error ? error.message : String(error);
     logger.warn(`Failed to schedule bot for updated calendar event ${recordId}: ${msg}`);
-    return { error: msg };
+    return { error: msg, pendingId };
   }
 };
 
@@ -79,10 +110,9 @@ export default defineLogicFunction({
   universalIdentifier: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e',
   name: 'on-calendar-event-updated',
   description: 'Schedules a Meeting BaaS bot when a calendar event gains a conference link',
-  timeoutSeconds: 15,
+  timeoutSeconds: 30,
   handler,
   databaseEventTriggerSettings: {
     eventName: 'calendarEvent.updated',
-    updatedFields: ['conferenceLink'],
   },
 });

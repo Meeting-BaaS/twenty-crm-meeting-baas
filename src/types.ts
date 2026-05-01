@@ -1,44 +1,9 @@
-// SDK V2 types
-import type { V2 } from '@meeting-baas/sdk';
-
-export type BotWebhookCompleted = V2.BotWebhookCompleted;
-export type BotWebhookCompletedData = V2.BotWebhookCompletedData;
-export type BotWebhookFailed = V2.BotWebhookFailed;
-export type BotWebhookFailedData = V2.BotWebhookFailedData;
-export type BotWebhookStatusChange = V2.BotWebhookStatusChange;
-
-export type MeetingBaasWebhookPayload =
-  | BotWebhookCompleted
-  | BotWebhookFailed
-  | BotWebhookStatusChange;
-
-export const WebhookEvent = {
-  COMPLETED: 'bot.completed' as BotWebhookCompleted['event'],
-  FAILED: 'bot.failed' as BotWebhookFailed['event'],
-  STATUS_CHANGE: 'bot.status_change' as BotWebhookStatusChange['event'],
-} as const;
-
 // Meeting platform types
 export type MeetingPlatform =
   | 'GOOGLE_MEET'
   | 'ZOOM'
   | 'MICROSOFT_TEAMS'
   | 'UNKNOWN';
-
-// Normalized recording data from Meeting BaaS
-export type RecordingData = {
-  botId: string;
-  title: string;
-  date: string;
-  duration: number;
-  transcript: string;
-  transcriptionUrl?: string;
-  diarizationUrl?: string;
-  mp4Url: string;
-  meetingUrl: string;
-  platform: MeetingPlatform;
-  extra: Record<string, unknown>;
-};
 
 // Webhook handler result
 export type ProcessResult = {
@@ -48,18 +13,23 @@ export type ProcessResult = {
   durationMinutes?: number;
 };
 
+// Recording status
+export type RecordingStatus = 'COMPLETED' | 'FAILED' | 'IN_PROGRESS' | 'PENDING_SCHEDULE' | 'SCHEDULED';
+
 // Recording upsert input for the REST API
 export type RecordingUpsertInput = {
   botId: string;
   name: string;
-  date: string;
+  date: string | null;
   duration: number;
   platform: MeetingPlatform;
-  status: 'COMPLETED' | 'FAILED' | 'IN_PROGRESS';
+  status: RecordingStatus;
   meetingUrl: { primaryLinkLabel: string; primaryLinkUrl: string; secondaryLinks: null } | null;
   mp4Url: { primaryLinkLabel: string; primaryLinkUrl: string; secondaryLinks: null } | null;
   transcript: string;
   summary?: string;
+  participantNames?: string;
+  participantEmails?: string;
   calendarEventId?: string;
   workspaceMemberId?: string;
 };

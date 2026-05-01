@@ -2,7 +2,7 @@ import {
   defineField,
   FieldType,
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
-} from 'twenty-sdk';
+} from 'twenty-sdk/define';
 
 export const RECORDING_PREFERENCE_FIELD_ID = '95ec702a-e4b4-4028-b563-900216d92b01';
 

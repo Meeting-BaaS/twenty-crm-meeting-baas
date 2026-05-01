@@ -1,9 +1,9 @@
 import axios from 'axios';
-import { defineLogicFunction } from 'twenty-sdk';
+import { defineLogicFunction } from 'twenty-sdk/define';
 import { MeetingBaasApiClient } from '../meeting-baas-api-client';
 import {
   resolveCalendarEventOwner,
-  checkIfRecordingExistsForEvent,
+  checkIfActiveRecordingExistsForEvent,
   upsertRecording,
   detectPlatform,
 } from '../twenty-sync-service';
@@ -33,6 +33,11 @@ type CalendarEvent = {
   conferenceUrl?: string;
   startsAt?: string;
   title?: string;
+};
+
+type BatchScheduleRequest = {
+  events?: CalendarEvent[];
+  hasMore?: boolean;
 };
 
 type BatchResult = {
@@ -78,9 +83,12 @@ const isOrganizer = async (
   }
 };
 
-// Paginate through future calendar events with conference links
+// Paginate through future calendar events with conference links.
+// Uses the caller's auth headers (user token) because the calendarEvent query
+// hook blocks app tokens — only user/apiKey tokens pass the visibility check.
 const fetchFutureCalendarEvents = async (
   maxEvents: number,
+  callerAuthHeaders: Record<string, string>,
 ): Promise<{ events: CalendarEvent[]; hasMore: boolean }> => {
   const now = new Date().toISOString();
   const events: CalendarEvent[] = [];
@@ -96,7 +104,7 @@ const fetchFutureCalendarEvents = async (
 
     let page: Record<string, unknown>[];
     try {
-      const response = await axios.get(url, { headers: restHeaders() });
+      const response = await axios.get(url, { headers: callerAuthHeaders });
       page = response.data?.data?.calendarEvents ?? [];
     } catch (error) {
       if (axios.isAxiosError(error) && error.response) {
@@ -139,9 +147,11 @@ export default defineLogicFunction({
     path: '/batch-schedule-bots',
     httpMethod: 'POST',
     isAuthRequired: true,
-    forwardedRequestHeaders: [],
+    forwardedRequestHeaders: ['authorization'],
   },
-  handler: async (): Promise<BatchResult> => {
+  handler: async (
+    event: { headers?: Record<string, string>; body?: BatchScheduleRequest | string | null | undefined },
+  ): Promise<BatchResult> => {
     const result: BatchResult = { scheduled: 0, skipped: 0, errors: [], hasMore: false };
 
     const apiKey = process.env.MEETING_BAAS_API_KEY;
@@ -157,11 +167,44 @@ export default defineLogicFunction({
       return result;
     }
 
-    // 1. Fetch future calendar events with conference links
-    logger.debug('fetching future calendar events');
-    const { events, hasMore } = await fetchFutureCalendarEvents(MAX_EVENTS_PER_RUN);
-    result.hasMore = hasMore;
-    logger.debug(`found ${events.length} future events with conference links`);
+    let parsedBody: BatchScheduleRequest | undefined;
+    if (typeof event?.body === 'string') {
+      try {
+        parsedBody = JSON.parse(event.body) as BatchScheduleRequest;
+      } catch {
+        result.errors.push('Invalid JSON body');
+        return result;
+      }
+    } else {
+      parsedBody = event?.body ?? undefined;
+    }
+
+    let events: CalendarEvent[] = [];
+
+    if (parsedBody?.events?.length) {
+      events = parsedBody.events;
+      result.hasMore = parsedBody.hasMore ?? false;
+      logger.debug(`received ${events.length} future events from client`);
+    } else {
+      // Use the caller's authorization header for calendarEvent queries (the app
+      // token is blocked by Twenty's calendarEvent visibility query hook).
+      const userAuth = event?.headers?.authorization;
+      if (!userAuth) {
+        result.errors.push('No authorization header forwarded — cannot query calendar events');
+        return result;
+      }
+      const callerAuthHeaders: Record<string, string> = {
+        Authorization: userAuth,
+        'Content-Type': 'application/json',
+      };
+
+      // 1. Fetch future calendar events with conference links
+      logger.debug('fetching future calendar events');
+      const fetched = await fetchFutureCalendarEvents(MAX_EVENTS_PER_RUN, callerAuthHeaders);
+      events = fetched.events;
+      result.hasMore = fetched.hasMore;
+      logger.debug(`found ${events.length} future events with conference links`);
+    }
 
     if (events.length === 0) return result;
 
@@ -175,8 +218,8 @@ export default defineLogicFunction({
     const preferenceCache = new Map<string, RecordingPreference>();
 
     for (const event of events) {
-      // Dedup: skip if recording already exists
-      const exists = await checkIfRecordingExistsForEvent(event.id);
+      // Dedup: skip if an active (non-FAILED) recording already exists
+      const exists = await checkIfActiveRecordingExistsForEvent(event.id);
       if (exists) {
         result.skipped++;
         continue;
@@ -232,31 +275,36 @@ export default defineLogicFunction({
       const batch = qualified.slice(i, i + BATCH_SIZE);
 
       const items = batch.map((event) => ({
-        meetingUrl: event.conferenceUrl!,
-        joinAt: event.startsAt!,
+        meeting_url: event.conferenceUrl!,
+        join_at: event.startsAt!,
+        transcription_enabled: true,
+        transcription_config: { provider: 'gladia' as const },
         extra: {
           calendarEventId: event.id,
           workspaceMemberId: event.workspaceMemberId,
           meeting_url: event.conferenceUrl,
         },
-        callbackUrl,
-        callbackSecret: apiKey,
+        callback_enabled: true as const,
+        callback_config: {
+          url: callbackUrl,
+          secret: apiKey,
+        },
       }));
 
       try {
-        const { botIds, errors } = await client.batchCreateScheduledBots(items);
+        const batchResult = await client.batchCreateScheduledBots(items);
 
         // Create placeholder recordings for successfully scheduled bots
-        for (let j = 0; j < botIds.length; j++) {
-          const event = batch[j];
+        for (const { index, bot_id: botId } of batchResult.data) {
+          const event = batch[index];
           try {
             await upsertRecording({
-              botId: botIds[j],
+              botId,
               name: event.title ? `Scheduled: ${event.title}` : `Scheduled: ${event.conferenceUrl}`,
               date: event.startsAt!,
               duration: 0,
               platform: detectPlatform(event.conferenceUrl!),
-              status: 'IN_PROGRESS',
+              status: 'SCHEDULED',
               meetingUrl: { primaryLinkLabel: 'Join Meeting', primaryLinkUrl: event.conferenceUrl!, secondaryLinks: null },
               mp4Url: null,
               transcript: '',
@@ -265,12 +313,12 @@ export default defineLogicFunction({
             });
           } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
-            logger.warn(`Failed to create placeholder for bot ${botIds[j]}: ${msg}`);
+            logger.warn(`Failed to create placeholder for bot ${botId}: ${msg}`);
           }
           result.scheduled++;
         }
 
-        for (const err of errors) {
+        for (const err of batchResult.errors) {
           const event = batch[err.index];
           result.errors.push(`Event ${event?.id}: ${err.code} - ${err.message}`);
         }

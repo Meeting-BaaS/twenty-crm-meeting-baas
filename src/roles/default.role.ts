@@ -1,4 +1,4 @@
-import { defineRole, PermissionFlag } from 'twenty-sdk';
+import { defineRole, PermissionFlag } from 'twenty-sdk/define';
 import { RECORDING_UNIVERSAL_IDENTIFIER } from '../objects/recording';
 
 export const DEFAULT_ROLE_ID = '3231cf40-5b90-4c2b-ae41-fcb5606299b4';
@@ -28,6 +28,27 @@ export default defineRole({
       canSoftDeleteObjectRecords: true,
       canDestroyObjectRecords: false,
     },
+    {
+      // task (standard object)
+      objectUniversalIdentifier: '20202020-1ba1-48ba-bc83-ef7e5990ed10',
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: true,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
+    {
+      // taskTarget (standard object)
+      objectUniversalIdentifier: '20202020-5a9a-44e8-95df-771cd06d0fb1',
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: true,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
   ],
-  permissionFlags: [PermissionFlag.APPLICATIONS, PermissionFlag.AI],
+  permissionFlags: [
+    PermissionFlag.APPLICATIONS,
+    PermissionFlag.AI,
+    PermissionFlag.UPLOAD_FILE,
+    PermissionFlag.DOWNLOAD_FILE,
+  ],
 });

@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { MeetingBaasApiClient } from '../meeting-baas-api-client';
-import { checkIfRecordingExistsForEvent, upsertRecording } from '../twenty-sync-service';
+import { MeetingBaasApiClient, RateLimitError } from '../meeting-baas-api-client';
+import { checkIfScheduledRecordingExistsForEvent, upsertRecording } from '../twenty-sync-service';
 import { detectPlatform } from '../twenty-sync-service';
 import { createLogger } from '../logger';
 import {
@@ -11,6 +11,16 @@ import { buildRestUrl, restHeaders } from '../utils';
 import { getMeetingBaasCallbackUrl } from '../workspace-webhook-url';
 
 const logger = createLogger('schedule-bot');
+
+export type QualifiedEvent = {
+  calendarEventId: string;
+  conferenceUrl: string;
+  startsAt: string;
+  workspaceMemberId: string;
+  meetingTitle: string;
+  botName: string;
+  entryMessage: string;
+};
 
 type BotSettings = {
   preferenceOverride: RecordingPreference | null;
@@ -68,6 +78,42 @@ const fetchCalendarEventTitle = async (
     return (eventData?.title as string) || '';
   } catch {
     return '';
+  }
+};
+
+// Returns snapshot data on success, null when the event no longer exists (404),
+// and throws on transient errors (network, 500, auth) so callers can decide to retry.
+export const loadCurrentEventSnapshot = async (
+  calendarEventId: string,
+): Promise<{
+  conferenceUrl: string | null;
+  startsAt: string | null;
+  title: string;
+} | null> => {
+  try {
+    const response = await axios({
+      method: 'GET',
+      headers: restHeaders(),
+      url: buildRestUrl(`calendarEvents/${calendarEventId}`),
+    });
+    const body = response.data?.data ?? response.data;
+    const eventData = body?.calendarEvent ?? body;
+    const conferenceLink = eventData?.conferenceLink as
+      | { primaryLinkUrl?: string }
+      | undefined;
+
+    return {
+      conferenceUrl: conferenceLink?.primaryLinkUrl ?? null,
+      startsAt: (eventData?.startsAt as string | undefined) ?? null,
+      title: (eventData?.title as string | undefined) ?? '',
+    };
+  } catch (error) {
+    // 404 = event deleted, return null so caller can mark FAILED
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return null;
+    }
+    // All other errors are transient — rethrow so caller can skip and retry later
+    throw error;
   }
 };
 
@@ -260,18 +306,23 @@ const scheduleBotForMember = async (
   }
 
   const botId = await client.createScheduledBot({
-    meetingUrl: conferenceUrl,
-    joinAt: startsAt,
-    botName,
-    ...(botEntryMessage && { entryMessage: botEntryMessage }),
+    meeting_url: conferenceUrl,
+    join_at: startsAt,
+    bot_name: botName,
+    transcription_enabled: true,
+    transcription_config: { provider: 'gladia' },
+    ...(botEntryMessage && { entry_message: botEntryMessage }),
     extra: {
       calendarEventId,
       workspaceMemberId,
       meeting_url: conferenceUrl,
       meeting_title: meetingTitle,
     },
-    callbackUrl,
-    callbackSecret: apiKey,
+    callback_enabled: true,
+    callback_config: {
+      url: callbackUrl,
+      secret: apiKey,
+    },
   });
 
   console.error(`[schedule-bot] member=${workspaceMemberId} SUCCESS: botId=${botId}`);
@@ -284,7 +335,7 @@ const scheduleBotForMember = async (
       date: startsAt,
       duration: 0,
       platform: detectPlatform(conferenceUrl),
-      status: 'IN_PROGRESS',
+      status: 'SCHEDULED',
       meetingUrl: { primaryLinkLabel: 'Join Meeting', primaryLinkUrl: conferenceUrl, secondaryLinks: null },
       mp4Url: null,
       transcript: '',
@@ -297,6 +348,130 @@ const scheduleBotForMember = async (
   }
 
   return botId;
+};
+
+// Qualify a calendar event for scheduling: checks past-event, API key, dedup,
+// resolves ownership, and evaluates recording preferences.
+// Returns the first qualifying member's data or null.
+export const qualifyEventForScheduling = async (
+  calendarEventId: string,
+  conferenceUrl: string,
+  startsAt: string,
+  title?: string,
+): Promise<QualifiedEvent | null> => {
+  const apiKey = process.env.MEETING_BAAS_API_KEY;
+  const workspacePreference = process.env.RECORDING_PREFERENCE;
+  console.error(`[schedule-bot] QUALIFY calendarEventId=${calendarEventId} conferenceUrl=${conferenceUrl} startsAt=${startsAt}`);
+
+  if (!apiKey) {
+    console.error('[schedule-bot] QUALIFY EXIT: MEETING_BAAS_API_KEY not set');
+    return null;
+  }
+
+  const startsAtDate = new Date(startsAt);
+  if (startsAtDate.getTime() < Date.now()) {
+    console.error(`[schedule-bot] QUALIFY EXIT: event is in the past (${startsAt})`);
+    return null;
+  }
+
+  // Check for SCHEDULED/COMPLETED recordings — ignores PENDING_SCHEDULE so the
+  // cron processor isn't blocked by its own pending record.
+  const alreadyScheduled = await checkIfScheduledRecordingExistsForEvent(calendarEventId);
+  if (alreadyScheduled) {
+    console.error(`[schedule-bot] QUALIFY EXIT: scheduled recording already exists for ${calendarEventId}`);
+    return null;
+  }
+
+  const members = await resolveAllEventMembers(calendarEventId);
+  if (members.length === 0) {
+    console.error(`[schedule-bot] QUALIFY EXIT: no workspace members found for ${calendarEventId}`);
+    return null;
+  }
+
+  // Use provided title or fall back to REST fetch (which may fail for app tokens
+  // due to calendarEvent query hooks restricting non-user access).
+  const meetingTitle = title ?? await fetchCalendarEventTitle(calendarEventId);
+  const sorted = [...members].sort((a, b) => Number(b.isOrganizer) - Number(a.isOrganizer));
+
+  for (const member of sorted) {
+    const { workspaceMemberId, isOrganizer: memberIsOrganizer } = member;
+    const {
+      preferenceOverride,
+      botName,
+      botEntryMessage,
+      isAvailable,
+    } = await fetchWorkspaceMemberBotSettings(workspaceMemberId);
+
+    const preference = isAvailable
+      ? resolveEffectiveRecordingPreference(
+          preferenceOverride,
+          workspacePreference as RecordingPreference | null | undefined,
+        )
+      : 'RECORD_NONE';
+
+    if (preference === 'RECORD_NONE') continue;
+    if (preference === 'RECORD_ORGANIZED' && !memberIsOrganizer) continue;
+
+    console.error(`[schedule-bot] QUALIFY SUCCESS: member=${workspaceMemberId}`);
+    return {
+      calendarEventId,
+      conferenceUrl,
+      startsAt,
+      workspaceMemberId,
+      meetingTitle,
+      botName,
+      entryMessage: botEntryMessage,
+    };
+  }
+
+  console.error(`[schedule-bot] QUALIFY EXIT: no qualifying members`);
+  return null;
+};
+
+// Create a PENDING_SCHEDULE recording as a queue marker for a calendar event.
+// Event data (conferenceUrl, startsAt, title) is stored in the recording so
+// the cron processor doesn't need to re-query calendarEvents (blocked for app tokens).
+export const createPendingRecording = async (
+  calendarEventId: string,
+  eventData?: { conferenceUrl?: string; startsAt?: string; title?: string },
+  workspaceMemberId?: string,
+): Promise<string | null> => {
+  try {
+    const conferenceUrl = eventData?.conferenceUrl;
+    const startsAt = eventData?.startsAt;
+    const title = eventData?.title;
+    const name = title
+      ? `Pending: ${title}`
+      : `Pending schedule: ${calendarEventId}`;
+
+    const recordingId = await upsertRecording({
+      botId: '',
+      name,
+      date: startsAt || null,
+      duration: 0,
+      platform: conferenceUrl ? detectPlatform(conferenceUrl) : 'UNKNOWN',
+      status: 'PENDING_SCHEDULE',
+      meetingUrl: conferenceUrl
+        ? { primaryLinkLabel: 'Join Meeting', primaryLinkUrl: conferenceUrl, secondaryLinks: null }
+        : null,
+      mp4Url: null,
+      transcript: '',
+      calendarEventId,
+      workspaceMemberId,
+    });
+    console.error(`[schedule-bot] PENDING recording created: ${recordingId} for event ${calendarEventId}`);
+    return recordingId;
+  } catch (error: unknown) {
+    let msg: string;
+    if (error && typeof error === 'object' && 'response' in error) {
+      const axiosErr = error as { response?: { status?: number; data?: unknown }; message?: string };
+      msg = `${axiosErr.response?.status ?? '?'}: ${JSON.stringify(axiosErr.response?.data ?? axiosErr.message)}`;
+    } else {
+      msg = error instanceof Error ? error.message : String(error);
+    }
+    console.error(`[schedule-bot] PENDING recording FAILED for event ${calendarEventId}: ${msg}`);
+    return null;
+  }
 };
 
 // Main entry point: resolve all workspace members for the event,
@@ -317,10 +492,19 @@ export const scheduleBot = async (
     return null;
   }
 
-  // Dedup: check if a recording already exists for this calendar event
-  const alreadyExists = await checkIfRecordingExistsForEvent(calendarEventId);
-  if (alreadyExists) {
-    console.error(`[schedule-bot] EXIT: recording already exists for ${calendarEventId}`);
+  // Skip past events — can't schedule a bot for a meeting that already happened
+  const startsAtDate = new Date(startsAt);
+  if (startsAtDate.getTime() < Date.now()) {
+    console.error(`[schedule-bot] EXIT: event is in the past (${startsAt})`);
+    return null;
+  }
+
+  // Dedup: check if a SCHEDULED/COMPLETED/IN_PROGRESS recording already exists.
+  // Ignores PENDING_SCHEDULE so callers who create a pending first aren't blocked
+  // by their own record, while still catching concurrent triggers that already scheduled.
+  const alreadyScheduled = await checkIfScheduledRecordingExistsForEvent(calendarEventId);
+  if (alreadyScheduled) {
+    console.error(`[schedule-bot] EXIT: scheduled recording already exists for ${calendarEventId}`);
     return null;
   }
 
@@ -349,6 +533,8 @@ export const scheduleBot = async (
       );
       if (botId) return botId;
     } catch (error) {
+      // Let rate limit errors propagate so callers can defer to PENDING_SCHEDULE
+      if (error instanceof RateLimitError) throw error;
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[schedule-bot] ERROR for member=${member.workspaceMemberId}: ${msg}`);
     }

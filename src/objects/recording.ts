@@ -1,4 +1,4 @@
-import { defineObject, FieldType } from 'twenty-sdk';
+import { defineObject, FieldType } from 'twenty-sdk/define';
 
 export const RECORDING_UNIVERSAL_IDENTIFIER =
   'cf2647b6-ce44-44ca-a866-5db0071899da';
@@ -14,6 +14,9 @@ export const MEETING_URL_FIELD_ID = 'ad56795c-49ac-4075-b099-42e938d9e36e';
 export const MP4_URL_FIELD_ID = '00ecab81-954c-47c4-a263-96fd5ccbc39d';
 export const PLATFORM_FIELD_ID = 'eaa24930-508b-4e63-80c3-cc607d8e2845';
 export const STATUS_FIELD_ID = '6fce2fe2-169e-4780-9fc4-d330d3cd39bc';
+export const PARTICIPANT_NAMES_FIELD_ID = '2f4d86ee-0262-4a77-89ad-c9888eb95c63';
+export const PARTICIPANT_EMAILS_FIELD_ID = '5a269573-6528-4436-85cc-099f6d31ecf3';
+export const VIDEO_FILE_FIELD_ID = 'b7e4f3a1-2c5d-4e8f-9a1b-3d6c7e8f9a0b';
 
 export default defineObject({
   universalIdentifier: RECORDING_UNIVERSAL_IDENTIFIER,
@@ -84,6 +87,24 @@ export default defineObject({
       icon: 'IconVideo',
     },
     {
+      universalIdentifier: PARTICIPANT_NAMES_FIELD_ID,
+      type: FieldType.TEXT,
+      label: 'Participant Names',
+      name: 'participantNames',
+      icon: 'IconUsers',
+      isNullable: true,
+      defaultValue: null,
+    },
+    {
+      universalIdentifier: PARTICIPANT_EMAILS_FIELD_ID,
+      type: FieldType.TEXT,
+      label: 'Participant Emails',
+      name: 'participantEmails',
+      icon: 'IconAt',
+      isNullable: true,
+      defaultValue: null,
+    },
+    {
       universalIdentifier: PLATFORM_FIELD_ID,
       type: FieldType.SELECT,
       label: 'Platform',
@@ -96,6 +117,9 @@ export default defineObject({
         { id: 'd0d8114f-811c-4d14-8c6d-fea5283e2b61', value: 'UNKNOWN', label: 'Unknown', position: 3, color: 'gray' },
       ],
     },
+    // videoFile (FILES) is created post-install via metadata API because
+    // twenty-sdk 0.9.0 doesn't pass settings.maxNumberOfValues in the sync
+    // mutation, which the server requires for FILES fields.
     {
       universalIdentifier: STATUS_FIELD_ID,
       type: FieldType.SELECT,
@@ -106,6 +130,8 @@ export default defineObject({
         { id: 'e127d867-4931-4e15-a5be-971caa8678a3', value: 'COMPLETED', label: 'Completed', position: 0, color: 'green' },
         { id: '776885a7-8a42-415c-92fe-e08f5a1274ea', value: 'FAILED', label: 'Failed', position: 1, color: 'red' },
         { id: '12374b43-a6fe-48d6-8a71-437242e59df2', value: 'IN_PROGRESS', label: 'In Progress', position: 2, color: 'orange' },
+        { id: 'a8c5d2e1-3f7b-4a9c-b6d4-e5f1a2b3c4d5', value: 'SCHEDULED', label: 'Scheduled', position: 3, color: 'sky' },
+        { id: 'f9d8c7b6-a5e4-4d3c-b2a1-e0f9d8c7b6a5', value: 'PENDING_SCHEDULE', label: 'Pending Schedule', position: 4, color: 'yellow' },
       ],
     },
   ],

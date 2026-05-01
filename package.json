@@ -1,6 +1,6 @@
 {
   "name": "meeting-baas-recorder",
-  "version": "0.2.0",
+  "version": "0.9.26",
   "license": "MIT",
   "engines": {
     "node": "^24.5.0",
@@ -16,13 +16,15 @@
     "lint": "oxlint -c .oxlintrc.json .",
     "lint:fix": "oxlint --fix -c .oxlintrc.json .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "update": "twenty deploy && node scripts/clean-viewfields.mjs && twenty install"
   },
   "dependencies": {
     "@meeting-baas/sdk": "^6.0.5",
     "axios": "^1.15.0",
-    "twenty-client-sdk": "0.9.0",
-    "twenty-sdk": "0.9.0",
+    "react-markdown": "^10.1.0",
+    "twenty-client-sdk": "2.1.0",
+    "twenty-sdk": "2.1.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
