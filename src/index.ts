@@ -29,6 +29,11 @@ export { default as OnCalendarEventUpdated } from './logic-functions/on-calendar
 export { default as BatchScheduleBots } from './logic-functions/batch-schedule-bots';
 export { default as BackfillRecordingFiles } from './logic-functions/backfill-recording-files';
 export { default as RecordingVideo } from './logic-functions/recording-video';
+export { default as RecordingDetailData } from './logic-functions/recording-detail-data';
+export { default as RecordingCreateTask } from './logic-functions/recording-create-task';
+export { default as RecordingToggleTask } from './logic-functions/recording-toggle-task';
+export { default as RecordingGenerateActionItems } from './logic-functions/recording-generate-action-items';
+export { default as RecordingChat } from './logic-functions/recording-chat';
 
 // Logic functions (cron-triggered)
 export { default as DailySchedulePending } from './logic-functions/daily-schedule-pending';

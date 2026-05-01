@@ -10,11 +10,29 @@ export const RECORDING_DETAIL_FRONT_COMPONENT_ID =
 // -- API helpers ----------------------------------------------------------
 
 const getApiUrl = () => process.env.TWENTY_API_URL ?? '';
-const getToken = () => process.env.TWENTY_APP_ACCESS_TOKEN ?? '';
-const authHeaders = () => ({
-  Authorization: `Bearer ${getToken()}`,
-  'Content-Type': 'application/json',
-});
+const postAppRoute = async <TResponse,>(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<TResponse> => {
+  const response = await fetch(`${getApiUrl()}/s/${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const json = (await response.json()) as {
+    statusCode?: number;
+    error?: string;
+  } & TResponse;
+
+  if (!response.ok || (typeof json.statusCode === 'number' && json.statusCode >= 400)) {
+    throw new Error(json.error || `Request failed: ${response.status}`);
+  }
+
+  return json;
+};
 
 // -- Types ----------------------------------------------------------------
 
@@ -41,6 +59,24 @@ type GeneratedItem = {
   taskId?: string;
 };
 
+type RecordingDetailDataResponse = {
+  recording: Recording;
+  linkedTasks: LinkedTask[];
+};
+
+type CreateTaskResponse = {
+  task: LinkedTask;
+};
+
+type GenerateActionItemsResponse = {
+  items: Array<{ title: string; assignee: string | null }>;
+};
+
+type RecordingChatResponse = {
+  answer: string;
+  actions: string[];
+};
+
 // -- Helpers --------------------------------------------------------------
 
 const parseTranscript = (raw: string): TranscriptEntry[] => {
@@ -57,105 +93,26 @@ const parseTranscript = (raw: string): TranscriptEntry[] => {
     });
 };
 
-const fetchRecording = async (id: string): Promise<Recording | null> => {
-  const res = await fetch(`${getApiUrl()}/rest/recordings/${id}`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) return null;
-  const json = await res.json();
-  const rec = json?.data?.recording ?? json?.data;
-  if (!rec) return null;
-  return {
-    id: rec.id,
-    name: rec.name ?? '',
-    botId: rec.botId ?? '',
-    transcript: rec.transcript ?? '',
-    summary: rec.summary ?? '',
-    mp4Url: rec.mp4Url ?? null,
-    videoFile: rec.videoFile ?? [],
-    participantNames: rec.participantNames ?? '',
-    duration: rec.duration ?? 0,
-    status: rec.status ?? '',
-  };
-};
-
-const fetchLinkedTasks = async (recordingId: string): Promise<LinkedTask[]> => {
-  try {
-    const filter = encodeURIComponent(`recordingId[eq]:"${recordingId}"`);
-    const res = await fetch(
-      `${getApiUrl()}/rest/taskTargets?filter=${filter}&limit=50`,
-      { headers: authHeaders() },
-    );
-    if (!res.ok) return [];
-    const json = await res.json();
-    const targets: Array<{ taskId?: string; task?: { id: string; title: string; status: string } }> =
-      json?.data?.taskTargets ?? json?.data ?? [];
-
-    // If task data is embedded, use it directly
-    const embedded = targets.filter((t) => t.task).map((t) => t.task!);
-    if (embedded.length > 0) return embedded;
-
-    // Otherwise fetch tasks by ID
-    const taskIds = targets.map((t) => t.taskId).filter(Boolean) as string[];
-    if (taskIds.length === 0) return [];
-    const tasks: LinkedTask[] = [];
-    for (const tid of taskIds) {
-      const tRes = await fetch(`${getApiUrl()}/rest/tasks/${tid}`, {
-        headers: authHeaders(),
-      });
-      if (tRes.ok) {
-        const tJson = await tRes.json();
-        const t = tJson?.data?.task ?? tJson?.data;
-        if (t) tasks.push({ id: t.id, title: t.title ?? '', status: t.status ?? 'TODO' });
-      }
-    }
-    return tasks;
-  } catch {
-    return [];
-  }
-};
-
 const createTask = async (
   title: string,
   recordingId: string,
-): Promise<{ taskId: string } | null> => {
-  const taskRes = await fetch(`${getApiUrl()}/rest/tasks`, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({ title, status: 'TODO' }),
+): Promise<LinkedTask | null> => {
+  const json = await postAppRoute<CreateTaskResponse>('recording-create-task', {
+    title,
+    recordingId,
   });
-  if (!taskRes.ok) return null;
-  const taskJson = await taskRes.json();
-  const taskId = taskJson?.data?.task?.id ?? taskJson?.data?.id;
-  if (!taskId) return null;
-
-  await fetch(`${getApiUrl()}/rest/taskTargets`, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({ taskId, recordingId }),
-  });
-  return { taskId };
+  return json.task ?? null;
 };
 
-const generateAiText = async (
-  systemPrompt: string,
-  userPrompt: string,
-): Promise<string | null> => {
-  const res = await fetch(`${getApiUrl()}/rest/ai/generate-text`, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({ systemPrompt, userPrompt }),
-  });
-  if (!res.ok) return null;
-  const json = await res.json();
-  return json?.text ?? null;
-};
-
-const toggleTaskStatus = async (taskId: string, done: boolean): Promise<void> => {
-  await fetch(`${getApiUrl()}/rest/tasks/${taskId}`, {
-    method: 'PATCH',
-    headers: authHeaders(),
-    body: JSON.stringify({ status: done ? 'DONE' : 'TODO' }),
+const toggleTaskStatus = async (
+  taskId: string,
+  recordingId: string,
+  done: boolean,
+): Promise<void> => {
+  await postAppRoute('recording-toggle-task', {
+    taskId,
+    recordingId,
+    done,
   });
 };
 
@@ -421,20 +378,6 @@ const StyledLoading = styled.div`
   text-align: center;
 `;
 
-// -- AI prompts -----------------------------------------------------------
-
-const ACTION_ITEMS_SYSTEM_PROMPT = [
-  'You extract action items from a meeting transcript.',
-  'Return a JSON array: [{ "title": "...", "assignee": "..." | null }].',
-  'Only concrete, actionable items. No discussion points. Valid JSON only.',
-].join('\n');
-
-const CHAT_SYSTEM_PROMPT = [
-  'You are analyzing a meeting recording. Answer questions about the content.',
-  'When suggesting action items, prefix each with "ACTION:" on its own line.',
-  'Use markdown for formatting.',
-].join('\n');
-
 // -- Component ------------------------------------------------------------
 
 const RecordingDetail = () => {
@@ -459,20 +402,27 @@ const RecordingDetail = () => {
     }
     let cancelled = false;
     (async () => {
-      const rec = await fetchRecording(recordId);
-      if (cancelled) return;
-      setRecording(rec);
-      setLoading(false);
-      if (rec) {
-        const tasks = await fetchLinkedTasks(rec.id);
-        if (!cancelled) setLinkedTasks(tasks);
+      try {
+        const data = await postAppRoute<RecordingDetailDataResponse>('recording-detail-data', {
+          recordingId: recordId,
+        });
+        if (cancelled) return;
 
-        // Resolve video URL: prefer locally stored file, otherwise use proxy endpoint
-        const localUrl = rec.videoFile?.[0]?.url;
+        setRecording(data.recording);
+        setLinkedTasks(data.linkedTasks);
+        setLoading(false);
+
+        const localUrl = data.recording.videoFile?.[0]?.url;
         if (localUrl) {
           if (!cancelled) setVideoUrl(localUrl);
-        } else if (rec.botId) {
-          if (!cancelled) setVideoUrl(getVideoProxyUrl(rec.botId));
+        } else if (data.recording.botId) {
+          if (!cancelled) setVideoUrl(getVideoProxyUrl(data.recording.botId));
+        }
+      } catch {
+        if (!cancelled) {
+          setRecording(null);
+          setLinkedTasks([]);
+          setLoading(false);
         }
       }
     })();
@@ -503,29 +453,24 @@ const RecordingDetail = () => {
         t.id === task.id ? { ...t, status: newDone ? 'DONE' : 'TODO' } : t,
       ),
     );
-    await toggleTaskStatus(task.id, newDone);
+    await toggleTaskStatus(task.id, recording.id, newDone);
   };
 
   const handleGenerateActionItems = async () => {
     if (isGenerating || !recording.transcript) return;
     setIsGenerating(true);
     try {
-      const result = await generateAiText(
-        ACTION_ITEMS_SYSTEM_PROMPT,
-        recording.transcript,
+      const data = await postAppRoute<GenerateActionItemsResponse>('recording-generate-action-items', {
+        recordingId: recording.id,
+      });
+      setGeneratedItems(
+        data.items.map((item) => ({
+          title: item.title,
+          assignee: item.assignee ?? null,
+        })),
       );
-      if (result) {
-        const parsed: Array<{ title: string; assignee?: string | null }> =
-          JSON.parse(result);
-        setGeneratedItems(
-          parsed.map((item) => ({
-            title: item.title,
-            assignee: item.assignee ?? null,
-          })),
-        );
-      }
     } catch {
-      // Parse error — show nothing
+      setGeneratedItems([]);
     } finally {
       setIsGenerating(false);
     }
@@ -538,12 +483,12 @@ const RecordingDetail = () => {
     if (result) {
       setGeneratedItems((prev) =>
         prev.map((g, i) =>
-          i === index ? { ...g, saved: true, taskId: result.taskId } : g,
+          i === index ? { ...g, saved: true, taskId: result.id } : g,
         ),
       );
       setLinkedTasks((prev) => [
         ...prev,
-        { id: result.taskId, title: item.title, status: 'TODO' },
+        result,
       ]);
     }
   };
@@ -555,13 +500,15 @@ const RecordingDetail = () => {
     setChatMessages((prev) => [...prev, { role: 'user', content: question }]);
     setIsChatting(true);
     try {
-      const context = recording.transcript
-        ? `Meeting transcript:\n${recording.transcript}\n\nUser question: ${question}`
-        : question;
-      const reply = await generateAiText(CHAT_SYSTEM_PROMPT, context);
+      const data = await postAppRoute<RecordingChatResponse>('recording-chat', {
+        recordingId: recording.id,
+        question,
+      });
+      const actionLines = data.actions.map((action) => `ACTION: ${action}`);
+      const reply = [data.answer, ...actionLines].filter(Boolean).join('\n');
       setChatMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: reply ?? 'Sorry, I could not generate a response.' },
+        { role: 'assistant', content: reply || 'Sorry, I could not generate a response.' },
       ]);
     } catch {
       setChatMessages((prev) => [
@@ -578,7 +525,7 @@ const RecordingDetail = () => {
     if (result) {
       setLinkedTasks((prev) => [
         ...prev,
-        { id: result.taskId, title: text, status: 'TODO' },
+        result,
       ]);
     }
   };
