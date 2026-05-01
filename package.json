@@ -1,6 +1,6 @@
 {
   "name": "meeting-baas-recorder",
-  "version": "0.9.25",
+  "version": "0.9.26",
   "license": "MIT",
   "engines": {
     "node": "^24.5.0",

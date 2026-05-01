@@ -45,5 +45,10 @@ export default defineRole({
       canDestroyObjectRecords: false,
     },
   ],
-  permissionFlags: [PermissionFlag.APPLICATIONS, PermissionFlag.AI],
+  permissionFlags: [
+    PermissionFlag.APPLICATIONS,
+    PermissionFlag.AI,
+    PermissionFlag.UPLOAD_FILE,
+    PermissionFlag.DOWNLOAD_FILE,
+  ],
 });
