@@ -270,7 +270,6 @@ export const processPendingSchedules = async (): Promise<BatchResult> => {
         rec.conferenceUrl,
         rec.startsAt,
         titleFromName,
-        { skipDedupCheck: true },
       );
       if (!qualified) {
         result.skipped++;

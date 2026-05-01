@@ -9,6 +9,8 @@ import { getRecordingVideoProxyUrl } from '../workspace-webhook-url';
 const logger = createLogger('backfill-recording-files');
 
 const MAX_RECORDINGS_PER_RUN = 50;
+const PAGE_SIZE = 50;
+const MAX_SCAN_PAGES = 10;
 
 type BackfillResult = {
   processed: number;
@@ -29,30 +31,52 @@ type RecordingRow = {
 const fetchRecordingsWithoutFile = async (
   limit: number,
 ): Promise<RecordingRow[]> => {
-  // We can't filter "videoFile is empty" via REST, so fetch all completed
-  // recordings and filter client-side
-  const allUrl = buildRestUrl('recordings', {
-    filter: { status: { eq: 'COMPLETED' } },
-    limit,
-  });
+  const matches: RecordingRow[] = [];
+  let cursor: string | undefined;
 
-  const response = await axios.get(allUrl, { headers: restHeaders() });
-  const recordings: Record<string, unknown>[] =
-    response.data?.data?.recordings ?? [];
+  // We can't filter "videoFile is empty" via REST, so scan completed recordings
+  // across a bounded number of pages until we collect enough work for one run.
+  for (let page = 0; page < MAX_SCAN_PAGES && matches.length < limit; page++) {
+    const allUrl = buildRestUrl('recordings', {
+      filter: { status: { eq: 'COMPLETED' } },
+      limit: PAGE_SIZE,
+      cursor,
+    });
 
-  return recordings
-    .filter((r) => {
+    const response = await axios.get(allUrl, { headers: restHeaders() });
+    const recordings: Record<string, unknown>[] =
+      response.data?.data?.recordings ?? [];
+
+    for (const r of recordings) {
       const botId = r.botId as string | null;
       const videoFile = r.videoFile as unknown[] | null;
       const hasFile = Array.isArray(videoFile) && videoFile.length > 0;
-      return botId && !hasFile;
-    })
-    .map((r) => ({
-      id: r.id as string,
-      botId: r.botId as string,
-      mp4Url: r.mp4Url as RecordingRow['mp4Url'],
-      videoFile: r.videoFile as unknown[] | null,
-    }));
+      if (!botId || hasFile) continue;
+
+      matches.push({
+        id: r.id as string,
+        botId,
+        mp4Url: r.mp4Url as RecordingRow['mp4Url'],
+        videoFile,
+      });
+
+      if (matches.length >= limit) {
+        break;
+      }
+    }
+
+    if (recordings.length < PAGE_SIZE) {
+      break;
+    }
+
+    const lastId = recordings[recordings.length - 1]?.id;
+    if (typeof lastId !== 'string' || !lastId) {
+      break;
+    }
+    cursor = lastId;
+  }
+
+  return matches;
 };
 
 const updateRecordingMp4Url = async (

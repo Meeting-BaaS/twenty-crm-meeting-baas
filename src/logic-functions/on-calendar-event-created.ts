@@ -5,7 +5,7 @@ import {
 } from 'twenty-sdk/define';
 import { createLogger } from '../logger';
 import { RateLimitError } from '../meeting-baas-api-client';
-import { checkIfActiveRecordingExistsForEvent } from '../twenty-sync-service';
+import { checkIfActiveRecordingExistsForEvent, checkIfScheduledRecordingExistsForEvent } from '../twenty-sync-service';
 import { createPendingRecording, scheduleBot } from './schedule-bot';
 
 const logger = createLogger('on-calendar-event-created');
@@ -87,9 +87,18 @@ const handler = async (
   console.error(`[on-calendar-event-created] jitter ${Math.round(jitter)}ms before scheduling`);
   await sleep(jitter);
 
+  // Step 2b: After jitter, re-check: did a concurrent trigger already schedule a bot?
+  // This catches the race between calendarEvent.created and calendarEvent.updated
+  // firing simultaneously for the same event.
+  const alreadyScheduled = await checkIfScheduledRecordingExistsForEvent(recordId);
+  if (alreadyScheduled) {
+    console.error(`[on-calendar-event-created] EXIT: already scheduled by concurrent trigger`);
+    return { skipped: true, pendingId, reason: 'already scheduled by concurrent trigger' };
+  }
+
   // Step 3: Try to schedule directly with Meeting BaaS.
   try {
-    const botId = await scheduleBot(recordId, conferenceLink, startsAt, { skipDedupCheck: true });
+    const botId = await scheduleBot(recordId, conferenceLink, startsAt);
 
     if (botId) {
       console.error(`[on-calendar-event-created] SUCCESS: botId=${botId}`);

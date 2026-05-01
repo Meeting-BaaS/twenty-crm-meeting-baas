@@ -402,6 +402,30 @@ export const checkIfActiveRecordingExistsForEvent = async (
   }
 };
 
+// Like checkIfActiveRecordingExistsForEvent but ignores PENDING_SCHEDULE.
+// Used by scheduleBot to avoid being blocked by its own pending record while
+// still catching SCHEDULED/COMPLETED recordings from concurrent triggers.
+export const checkIfScheduledRecordingExistsForEvent = async (
+  calendarEventId: string,
+): Promise<boolean> => {
+  try {
+    const url = buildRestUrl('recordings', {
+      filter: {
+        calendarEventId: { eq: calendarEventId },
+        status: { neq: 'FAILED' },
+      },
+      limit: 10,
+    });
+    const response = await axios.get<TwentyListResponse<'recordings'>>(url, {
+      headers: authHeaders(),
+    });
+    const recordings = response.data?.data?.recordings ?? [];
+    return recordings.some(r => r.status !== 'PENDING_SCHEDULE');
+  } catch {
+    return false;
+  }
+};
+
 export const getRecordingStatusByCalendarEvent = async (
   calendarEventId: string,
 ): Promise<RecordingStatus | null> => {
@@ -440,6 +464,23 @@ export const checkIfRecordingExists = async (
   }
 };
 
+const findPendingRecordingIdByCalendarEvent = async (
+  calendarEventId: string,
+): Promise<string | null> => {
+  const url = buildRestUrl('recordings', {
+    filter: {
+      calendarEventId: { eq: calendarEventId },
+      status: { eq: 'PENDING_SCHEDULE' },
+    },
+    limit: 1,
+  });
+  const response = await axios.get<TwentyListResponse<'recordings'>>(url, {
+    headers: authHeaders(),
+  });
+  const recording = response.data?.data?.recordings?.[0];
+  return (recording?.id as string) ?? null;
+};
+
 export const upsertRecordingStatus = async (
   recordingId: string,
   status: RecordingStatus,
@@ -456,24 +497,15 @@ export const upsertRecording = async (
   opts: RecordingUpsertInput,
 ): Promise<string | null> => {
   const normalizedBotId = opts.botId.trim();
-  const existingId = normalizedBotId
-    ? await checkIfRecordingExists(normalizedBotId)
-    : opts.calendarEventId
-      ? await (async () => {
-          const url = buildRestUrl('recordings', {
-            filter: {
-              calendarEventId: { eq: opts.calendarEventId },
-              status: { eq: 'PENDING_SCHEDULE' },
-            },
-            limit: 1,
-          });
-          const response = await axios.get<TwentyListResponse<'recordings'>>(url, {
-            headers: authHeaders(),
-          });
-          const recording = response.data?.data?.recordings?.[0];
-          return (recording?.id as string) ?? null;
-        })()
-      : null;
+  let existingId: string | null = null;
+
+  if (normalizedBotId) {
+    existingId = await checkIfRecordingExists(normalizedBotId);
+  }
+
+  if (!existingId && opts.calendarEventId) {
+    existingId = await findPendingRecordingIdByCalendarEvent(opts.calendarEventId);
+  }
 
   const data: Record<string, unknown> = {
     name: opts.name,

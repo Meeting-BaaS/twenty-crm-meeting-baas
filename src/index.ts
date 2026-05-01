@@ -66,6 +66,7 @@ export {
   checkIfActiveRecordingExistsForEvent,
   checkIfRecordingExists,
   checkIfRecordingExistsForEvent,
+  checkIfScheduledRecordingExistsForEvent,
   detectPlatform,
   getRecordingStatusByCalendarEvent,
   resolveCalendarEventOwner,

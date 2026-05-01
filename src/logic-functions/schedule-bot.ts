@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { MeetingBaasApiClient, RateLimitError } from '../meeting-baas-api-client';
-import { checkIfActiveRecordingExistsForEvent, upsertRecording } from '../twenty-sync-service';
+import { checkIfScheduledRecordingExistsForEvent, upsertRecording } from '../twenty-sync-service';
 import { detectPlatform } from '../twenty-sync-service';
 import { createLogger } from '../logger';
 import {
@@ -358,7 +358,6 @@ export const qualifyEventForScheduling = async (
   conferenceUrl: string,
   startsAt: string,
   title?: string,
-  opts?: { skipDedupCheck?: boolean },
 ): Promise<QualifiedEvent | null> => {
   const apiKey = process.env.MEETING_BAAS_API_KEY;
   const workspacePreference = process.env.RECORDING_PREFERENCE;
@@ -375,14 +374,12 @@ export const qualifyEventForScheduling = async (
     return null;
   }
 
-  // Skip dedup when called from cron processor — the PENDING_SCHEDULE recording
-  // itself would match and block its own scheduling.
-  if (!opts?.skipDedupCheck) {
-    const alreadyExists = await checkIfActiveRecordingExistsForEvent(calendarEventId);
-    if (alreadyExists) {
-      console.error(`[schedule-bot] QUALIFY EXIT: active recording already exists for ${calendarEventId}`);
-      return null;
-    }
+  // Check for SCHEDULED/COMPLETED recordings — ignores PENDING_SCHEDULE so the
+  // cron processor isn't blocked by its own pending record.
+  const alreadyScheduled = await checkIfScheduledRecordingExistsForEvent(calendarEventId);
+  if (alreadyScheduled) {
+    console.error(`[schedule-bot] QUALIFY EXIT: scheduled recording already exists for ${calendarEventId}`);
+    return null;
   }
 
   const members = await resolveAllEventMembers(calendarEventId);
@@ -484,7 +481,6 @@ export const scheduleBot = async (
   calendarEventId: string,
   conferenceUrl: string,
   startsAt: string,
-  opts?: { skipDedupCheck?: boolean },
 ): Promise<string | null> => {
   const apiKey = process.env.MEETING_BAAS_API_KEY;
   const workspacePreference = process.env.RECORDING_PREFERENCE;
@@ -503,14 +499,13 @@ export const scheduleBot = async (
     return null;
   }
 
-  // Dedup: check if an active (non-FAILED) recording already exists for this calendar event.
-  // Skip when caller already did its own dedup (e.g. event trigger creates PENDING first).
-  if (!opts?.skipDedupCheck) {
-    const alreadyExists = await checkIfActiveRecordingExistsForEvent(calendarEventId);
-    if (alreadyExists) {
-      console.error(`[schedule-bot] EXIT: active recording already exists for ${calendarEventId}`);
-      return null;
-    }
+  // Dedup: check if a SCHEDULED/COMPLETED/IN_PROGRESS recording already exists.
+  // Ignores PENDING_SCHEDULE so callers who create a pending first aren't blocked
+  // by their own record, while still catching concurrent triggers that already scheduled.
+  const alreadyScheduled = await checkIfScheduledRecordingExistsForEvent(calendarEventId);
+  if (alreadyScheduled) {
+    console.error(`[schedule-bot] EXIT: scheduled recording already exists for ${calendarEventId}`);
+    return null;
   }
 
   // Resolve all workspace members for this event
