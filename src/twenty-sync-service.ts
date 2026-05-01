@@ -7,6 +7,7 @@ import type {
   SyncResult,
 } from './types';
 import { buildRestUrl, getApiToken, getRestApiUrl, restHeaders } from './utils';
+import { getRecordingVideoProxyUrl } from './workspace-webhook-url';
 
 const authHeaders = () => ({ Authorization: `Bearer ${getApiToken()}` });
 
@@ -477,7 +478,7 @@ export const upsertRecording = async (
   const data: Record<string, unknown> = {
     name: opts.name,
     botId: normalizedBotId,
-    date: opts.date,
+    date: opts.date || null,
     duration: opts.duration,
     platform: opts.platform,
     status: opts.status,
@@ -507,9 +508,12 @@ export const upsertRecording = async (
     url: `${getRestApiUrl()}/recordings`,
     data,
   });
-  const body = response.data?.data ?? response.data;
-  const record = body?.recording ?? body;
-  const id = record?.id;
+  // Twenty REST API POST response: { data: { createRecording: { id, ... } } }
+  const responseData = response.data;
+  const inner = responseData?.data ?? responseData;
+  // The key is the GraphQL mutation name (e.g. "createRecording")
+  const record = inner?.createRecording ?? inner?.recording ?? inner;
+  const id = record?.id ?? null;
   return id ? (id as string) : null;
 };
 
@@ -556,7 +560,11 @@ export const syncBotRecording = async (
         ? { primaryLinkLabel: 'Join Meeting', primaryLinkUrl: recordingData.meetingUrl, secondaryLinks: null }
         : null,
       mp4Url: recordingData.mp4Url
-        ? { primaryLinkLabel: 'Watch Recording', primaryLinkUrl: recordingData.mp4Url, secondaryLinks: null }
+        ? {
+            primaryLinkLabel: 'Watch Recording',
+            primaryLinkUrl: getRecordingVideoProxyUrl(recordingData.botId) ?? recordingData.mp4Url,
+            secondaryLinks: null,
+          }
         : null,
       transcript: recordingData.transcript,
       summary: recordingData.summary,

@@ -11,8 +11,15 @@ export { default as RecordingPreferenceField } from './fields/recording-preferen
 export { default as BotNameField } from './fields/bot-name-on-workspace-member.field';
 export { default as BotEntryMessageField } from './fields/bot-entry-message-on-workspace-member.field';
 
-// Front component
+// Front components
 export { default as MeetingBaasSettingsComponent } from './front-components/meeting-baas-settings.front-component';
+export { default as RecordingDetailComponent } from './front-components/recording-detail.front-component';
+
+// Page layouts
+export { default as RecordingRecordPageLayout } from './page-layouts/recording-record-page.page-layout';
+
+// Pre-install (runs before sync on updates)
+export { default as PreInstall } from './logic-functions/pre-install';
 
 // Logic functions (database event triggers)
 export { default as OnCalendarEventCreated } from './logic-functions/on-calendar-event-created';
@@ -36,14 +43,14 @@ export type {
   CalendarEventOwnership,
   MeetingPlatform,
   ProcessResult,
-  RecordingData,
   RecordingStatus,
   RecordingUpsertInput,
   SyncResult,
 } from './types';
 
 // Services
-export { MeetingBaasApiClient } from './meeting-baas-api-client';
+export { MeetingBaasApiClient, RateLimitError, extractParticipantNames, fetchTranscript } from './meeting-baas-api-client';
+export type { BotDetails } from './meeting-baas-api-client';
 export { WebhookHandler } from './webhook-handler';
 
 // AI summary

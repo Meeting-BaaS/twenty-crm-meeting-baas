@@ -5,22 +5,6 @@ export type MeetingPlatform =
   | 'MICROSOFT_TEAMS'
   | 'UNKNOWN';
 
-// Normalized recording data from Meeting BaaS
-export type RecordingData = {
-  botId: string;
-  title: string;
-  date: string;
-  duration: number;
-  transcript: string;
-  transcriptionUrl?: string;
-  diarizationUrl?: string;
-  mp4Url: string;
-  meetingUrl: string;
-  platform: MeetingPlatform;
-  participantNames: string[];
-  extra: Record<string, unknown>;
-};
-
 // Webhook handler result
 export type ProcessResult = {
   success: boolean;
@@ -36,7 +20,7 @@ export type RecordingStatus = 'COMPLETED' | 'FAILED' | 'IN_PROGRESS' | 'PENDING_
 export type RecordingUpsertInput = {
   botId: string;
   name: string;
-  date: string;
+  date: string | null;
   duration: number;
   platform: MeetingPlatform;
   status: RecordingStatus;

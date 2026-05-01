@@ -7,10 +7,10 @@ import {
   STATUS_FIELD_ID,
   PLATFORM_FIELD_ID,
   DURATION_FIELD_ID,
-  PARTICIPANT_NAMES_FIELD_ID,
-  PARTICIPANT_EMAILS_FIELD_ID,
   MEETING_URL_FIELD_ID,
   MP4_URL_FIELD_ID,
+  PARTICIPANT_NAMES_FIELD_ID,
+  PARTICIPANT_EMAILS_FIELD_ID,
 } from '../objects/recording';
 
 export default defineView({
@@ -23,13 +23,13 @@ export default defineView({
   fields: [
     { universalIdentifier: 'b953f475-0eb7-4864-b3e8-d2c4e8b02a3b', fieldMetadataUniversalIdentifier: NAME_FIELD_ID, position: 0, isVisible: true, size: 220 },
     { universalIdentifier: 'b3bd42e6-05cd-4c3a-bfad-726ef75a0c15', fieldMetadataUniversalIdentifier: DATE_FIELD_ID, position: 1, isVisible: true, size: 150 },
-    { universalIdentifier: '76d8a2c2-259f-49cc-8921-6ebad06ac276', fieldMetadataUniversalIdentifier: PARTICIPANT_NAMES_FIELD_ID, position: 2, isVisible: true, size: 220 },
-    { universalIdentifier: '4d31d04c-f90e-413a-9c67-38cb6a3594a3', fieldMetadataUniversalIdentifier: PARTICIPANT_EMAILS_FIELD_ID, position: 3, isVisible: true, size: 240 },
-    { universalIdentifier: '489703b0-1cd1-4422-98d8-6d8d32063821', fieldMetadataUniversalIdentifier: DURATION_FIELD_ID, position: 4, isVisible: true, size: 110 },
-    { universalIdentifier: 'e15d29e8-468a-4b8f-93cb-a71d89f01d45', fieldMetadataUniversalIdentifier: STATUS_FIELD_ID, position: 5, isVisible: true, size: 120 },
+    { universalIdentifier: '26c76116-6d59-485d-a998-ec7fe0921793', fieldMetadataUniversalIdentifier: PARTICIPANT_NAMES_FIELD_ID, position: 2, isVisible: true, size: 220 },
+    { universalIdentifier: 'eda40d46-5503-438a-9496-9b3819d805f8', fieldMetadataUniversalIdentifier: PARTICIPANT_EMAILS_FIELD_ID, position: 3, isVisible: true, size: 240 },
+    { universalIdentifier: 'e15d29e8-468a-4b8f-93cb-a71d89f01d45', fieldMetadataUniversalIdentifier: DURATION_FIELD_ID, position: 4, isVisible: true, size: 110 },
+    { universalIdentifier: '489703b0-1cd1-4422-98d8-6d8d32063821', fieldMetadataUniversalIdentifier: STATUS_FIELD_ID, position: 5, isVisible: true, size: 120 },
     { universalIdentifier: 'c2b37ddf-f16f-4b5f-b443-c6b5214eb4b4', fieldMetadataUniversalIdentifier: PLATFORM_FIELD_ID, position: 6, isVisible: true, size: 130 },
-    { universalIdentifier: 'f0989204-89f3-4211-b1b4-e9a19fd9d2c4', fieldMetadataUniversalIdentifier: MEETING_URL_FIELD_ID, position: 7, isVisible: true, size: 150 },
-    { universalIdentifier: '9332e438-65af-40ae-bd7b-3ecec55ce499', fieldMetadataUniversalIdentifier: MP4_URL_FIELD_ID, position: 8, isVisible: true, size: 150 },
+    { universalIdentifier: '76d8a2c2-259f-49cc-8921-6ebad06ac276', fieldMetadataUniversalIdentifier: MEETING_URL_FIELD_ID, position: 7, isVisible: true, size: 200 },
+    { universalIdentifier: '4d31d04c-f90e-413a-9c67-38cb6a3594a3', fieldMetadataUniversalIdentifier: MP4_URL_FIELD_ID, position: 8, isVisible: true, size: 200 },
   ],
   filters: [
     {

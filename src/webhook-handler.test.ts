@@ -6,9 +6,8 @@ const mocks = vi.hoisted(() => ({
   syncBotRecording: vi.fn(),
   checkIfRecordingExists: vi.fn(),
   upsertRecordingStatus: vi.fn(),
-  transformWebhookData: vi.fn(),
   fetchTranscript: vi.fn(),
-  meetingBaasConstructor: vi.fn(),
+  extractParticipantNames: vi.fn(),
 }));
 
 vi.mock('./generate-summary', () => ({
@@ -19,22 +18,16 @@ vi.mock('./twenty-sync-service', () => ({
   syncBotRecording: mocks.syncBotRecording,
   checkIfRecordingExists: mocks.checkIfRecordingExists,
   upsertRecordingStatus: mocks.upsertRecordingStatus,
+  detectPlatform: (url: string) => {
+    if (url.includes('meet.google.com')) return 'GOOGLE_MEET';
+    return 'UNKNOWN';
+  },
 }));
 
 vi.mock('./meeting-baas-api-client', () => ({
-  MeetingBaasApiClient: class {
-    constructor(apiKey: string) {
-      mocks.meetingBaasConstructor(apiKey);
-    }
-
-    transformWebhookData(...args: unknown[]) {
-      return mocks.transformWebhookData(...args);
-    }
-
-    fetchTranscript(...args: unknown[]) {
-      return mocks.fetchTranscript(...args);
-    }
-  },
+  MeetingBaasApiClient: class {},
+  fetchTranscript: mocks.fetchTranscript,
+  extractParticipantNames: mocks.extractParticipantNames,
 }));
 
 const completedPayload = {
@@ -45,6 +38,17 @@ const completedPayload = {
     video: 'https://example.com/recording.mp4',
     joined_at: '2026-04-14T10:00:00Z',
     participants: [],
+    speakers: [],
+    diarization: 'https://example.com/diarization.jsonl',
+    transcription: null,
+    data_deleted: false,
+    audio: null,
+    raw_transcription: null,
+    transcription_provider: 'gladia',
+    transcription_ids: null,
+    exited_at: null,
+    event_id: null,
+    sent_at: '2026-04-14T10:30:00Z',
   },
   extra: {
     meeting_url: 'https://meet.google.com/abc-defg-hij',
@@ -59,21 +63,7 @@ describe('WebhookHandler', () => {
     vi.clearAllMocks();
     process.env.MEETING_BAAS_API_KEY = 'secret-123';
 
-    mocks.transformWebhookData.mockReturnValue({
-      botId: 'bot-123',
-      title: 'Test Recording',
-      date: '2026-04-14T10:00:00Z',
-      duration: 1800,
-      transcript: '',
-      mp4Url: 'https://example.com/recording.mp4',
-      meetingUrl: 'https://meet.google.com/abc-defg-hij',
-      platform: 'GOOGLE_MEET',
-      participantNames: ['Alice Example', 'Bob Example'],
-      extra: {
-        calendarEventId: 'calendar-event-1',
-        workspaceMemberId: 'workspace-member-1',
-      },
-    });
+    mocks.extractParticipantNames.mockReturnValue(['Alice Example', 'Bob Example']);
     mocks.fetchTranscript.mockResolvedValue('Speaker A: Hello\nSpeaker B: Hi');
     mocks.generateSummary.mockResolvedValue('Summary text');
     mocks.syncBotRecording.mockResolvedValue('recording-123');
@@ -95,8 +85,10 @@ describe('WebhookHandler', () => {
       durationMinutes: 30,
       recordingId: 'recording-123',
     });
-    expect(mocks.meetingBaasConstructor).toHaveBeenCalledWith('secret-123');
-    expect(mocks.fetchTranscript).toHaveBeenCalledOnce();
+    expect(mocks.fetchTranscript).toHaveBeenCalledWith(
+      completedPayload.data.diarization,
+      completedPayload.data.transcription,
+    );
     expect(mocks.generateSummary).toHaveBeenCalledWith('Speaker A: Hello\nSpeaker B: Hi');
     expect(mocks.syncBotRecording).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -28,6 +28,22 @@ export default defineRole({
       canSoftDeleteObjectRecords: true,
       canDestroyObjectRecords: false,
     },
+    {
+      // task (standard object)
+      objectUniversalIdentifier: '20202020-1ba1-48ba-bc83-ef7e5990ed10',
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: true,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
+    {
+      // taskTarget (standard object)
+      objectUniversalIdentifier: '20202020-5a9a-44e8-95df-771cd06d0fb1',
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: true,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
   ],
   permissionFlags: [PermissionFlag.APPLICATIONS, PermissionFlag.AI],
 });

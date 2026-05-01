@@ -111,9 +111,9 @@ export default defineLogicFunction({
       result.processed++;
 
       try {
-        const details = await client.getBotDetails(recording.botId!);
+        const bot = await client.getBotDetails(recording.botId!);
 
-        if (!details.video) {
+        if (!bot.video) {
           logger.debug(`recording ${recording.id}: no video URL from BaaS, skipping`);
           result.skipped++;
           continue;
@@ -122,13 +122,13 @@ export default defineLogicFunction({
         // Set the proxy URL so the link auto-refreshes on click;
         // fall back to the raw presigned URL if proxy is unavailable
         const proxyUrl = getRecordingVideoProxyUrl(recording.botId!);
-        await updateRecordingMp4Url(recording.id, proxyUrl ?? details.video);
+        await updateRecordingMp4Url(recording.id, proxyUrl ?? bot.video);
         result.refreshed++;
         logger.debug(`recording ${recording.id}: mp4Url refreshed`);
 
         // Optionally download and store the file locally
         if (storeLocally) {
-          await downloadAndStoreRecording(details.video, recording.id);
+          await downloadAndStoreRecording(bot.video, recording.id);
           result.stored++;
           logger.debug(`recording ${recording.id}: file stored locally`);
         }

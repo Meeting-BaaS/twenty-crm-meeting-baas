@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { MeetingBaasApiClient } from '../meeting-baas-api-client';
+import { MeetingBaasApiClient, RateLimitError } from '../meeting-baas-api-client';
 import { checkIfActiveRecordingExistsForEvent, upsertRecording } from '../twenty-sync-service';
 import { detectPlatform } from '../twenty-sync-service';
 import { createLogger } from '../logger';
@@ -358,6 +358,7 @@ export const qualifyEventForScheduling = async (
   conferenceUrl: string,
   startsAt: string,
   title?: string,
+  opts?: { skipDedupCheck?: boolean },
 ): Promise<QualifiedEvent | null> => {
   const apiKey = process.env.MEETING_BAAS_API_KEY;
   const workspacePreference = process.env.RECORDING_PREFERENCE;
@@ -374,10 +375,14 @@ export const qualifyEventForScheduling = async (
     return null;
   }
 
-  const alreadyExists = await checkIfActiveRecordingExistsForEvent(calendarEventId);
-  if (alreadyExists) {
-    console.error(`[schedule-bot] QUALIFY EXIT: active recording already exists for ${calendarEventId}`);
-    return null;
+  // Skip dedup when called from cron processor — the PENDING_SCHEDULE recording
+  // itself would match and block its own scheduling.
+  if (!opts?.skipDedupCheck) {
+    const alreadyExists = await checkIfActiveRecordingExistsForEvent(calendarEventId);
+    if (alreadyExists) {
+      console.error(`[schedule-bot] QUALIFY EXIT: active recording already exists for ${calendarEventId}`);
+      return null;
+    }
   }
 
   const members = await resolveAllEventMembers(calendarEventId);
@@ -427,19 +432,31 @@ export const qualifyEventForScheduling = async (
 };
 
 // Create a PENDING_SCHEDULE recording as a queue marker for a calendar event.
+// Event data (conferenceUrl, startsAt, title) is stored in the recording so
+// the cron processor doesn't need to re-query calendarEvents (blocked for app tokens).
 export const createPendingRecording = async (
   calendarEventId: string,
+  eventData?: { conferenceUrl?: string; startsAt?: string; title?: string },
   workspaceMemberId?: string,
 ): Promise<string | null> => {
   try {
+    const conferenceUrl = eventData?.conferenceUrl;
+    const startsAt = eventData?.startsAt;
+    const title = eventData?.title;
+    const name = title
+      ? `Pending: ${title}`
+      : `Pending schedule: ${calendarEventId}`;
+
     const recordingId = await upsertRecording({
       botId: '',
-      name: `Pending schedule: ${calendarEventId}`,
-      date: '',
+      name,
+      date: startsAt || null,
       duration: 0,
-      platform: 'UNKNOWN',
+      platform: conferenceUrl ? detectPlatform(conferenceUrl) : 'UNKNOWN',
       status: 'PENDING_SCHEDULE',
-      meetingUrl: null,
+      meetingUrl: conferenceUrl
+        ? { primaryLinkLabel: 'Join Meeting', primaryLinkUrl: conferenceUrl, secondaryLinks: null }
+        : null,
       mp4Url: null,
       transcript: '',
       calendarEventId,
@@ -447,9 +464,15 @@ export const createPendingRecording = async (
     });
     console.error(`[schedule-bot] PENDING recording created: ${recordingId} for event ${calendarEventId}`);
     return recordingId;
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.warn(`Failed to create pending recording for event ${calendarEventId}: ${msg}`);
+  } catch (error: unknown) {
+    let msg: string;
+    if (error && typeof error === 'object' && 'response' in error) {
+      const axiosErr = error as { response?: { status?: number; data?: unknown }; message?: string };
+      msg = `${axiosErr.response?.status ?? '?'}: ${JSON.stringify(axiosErr.response?.data ?? axiosErr.message)}`;
+    } else {
+      msg = error instanceof Error ? error.message : String(error);
+    }
+    console.error(`[schedule-bot] PENDING recording FAILED for event ${calendarEventId}: ${msg}`);
     return null;
   }
 };
@@ -461,6 +484,7 @@ export const scheduleBot = async (
   calendarEventId: string,
   conferenceUrl: string,
   startsAt: string,
+  opts?: { skipDedupCheck?: boolean },
 ): Promise<string | null> => {
   const apiKey = process.env.MEETING_BAAS_API_KEY;
   const workspacePreference = process.env.RECORDING_PREFERENCE;
@@ -479,11 +503,14 @@ export const scheduleBot = async (
     return null;
   }
 
-  // Dedup: check if an active (non-FAILED) recording already exists for this calendar event
-  const alreadyExists = await checkIfActiveRecordingExistsForEvent(calendarEventId);
-  if (alreadyExists) {
-    console.error(`[schedule-bot] EXIT: active recording already exists for ${calendarEventId}`);
-    return null;
+  // Dedup: check if an active (non-FAILED) recording already exists for this calendar event.
+  // Skip when caller already did its own dedup (e.g. event trigger creates PENDING first).
+  if (!opts?.skipDedupCheck) {
+    const alreadyExists = await checkIfActiveRecordingExistsForEvent(calendarEventId);
+    if (alreadyExists) {
+      console.error(`[schedule-bot] EXIT: active recording already exists for ${calendarEventId}`);
+      return null;
+    }
   }
 
   // Resolve all workspace members for this event
@@ -511,6 +538,8 @@ export const scheduleBot = async (
       );
       if (botId) return botId;
     } catch (error) {
+      // Let rate limit errors propagate so callers can defer to PENDING_SCHEDULE
+      if (error instanceof RateLimitError) throw error;
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[schedule-bot] ERROR for member=${member.workspaceMemberId}: ${msg}`);
     }

@@ -34,7 +34,7 @@ const fetchRecordingObjectMetadata = async (
     objects: {
       __args: {
         paging: { first: 200 },
-        filter: { isActive: { eq: true } },
+        filter: { isActive: { is: true } },
       },
       edges: {
         node: {

@@ -79,9 +79,9 @@ export default defineLogicFunction({
 
     try {
       const client = new MeetingBaasApiClient(apiKey);
-      const details = await client.getBotDetails(botId);
+      const bot = await client.getBotDetails(botId);
 
-      if (!details.video) {
+      if (!bot.video) {
         return {
           statusCode: 404,
           headers: { 'Content-Type': 'application/json' },
@@ -92,12 +92,16 @@ export default defineLogicFunction({
       // Update the recording's mp4Url with the fresh presigned URL
       const recording = await fetchRecordingByBotId(botId);
       if (recording) {
-        await updateRecordingMp4Url(recording.id, details.video);
+        await updateRecordingMp4Url(recording.id, bot.video);
         logger.debug(`refreshed mp4Url for recording ${recording.id}`);
       }
 
-      // Return the fresh URL (Twenty logic functions can't do HTTP 302 redirects)
-      return { videoUrl: details.video };
+      // Redirect to the fresh presigned URL
+      return {
+        statusCode: 302,
+        headers: { Location: bot.video },
+        body: '',
+      };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`failed to get video URL: ${msg}`);

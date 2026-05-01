@@ -38,8 +38,10 @@ export const generateSummary = async (
     }
 
     return null;
-  } catch {
+  } catch (error) {
     // Non-fatal — recording still saves without a summary
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[generate-summary] failed: ${msg}`);
     return null;
   }
 };

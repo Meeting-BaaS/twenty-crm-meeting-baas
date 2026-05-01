@@ -1,12 +1,11 @@
 import axios from 'axios';
 import { open, readFile, rename, rm, writeFile } from 'fs/promises';
-import { MeetingBaasApiClient } from '../meeting-baas-api-client';
+import { MeetingBaasApiClient, RateLimitError } from '../meeting-baas-api-client';
 import { createLogger } from '../logger';
 import { detectPlatform } from '../twenty-sync-service';
 import { buildRestUrl, getRestApiUrl, restHeaders } from '../utils';
 import { getMeetingBaasCallbackUrl } from '../workspace-webhook-url';
 import {
-  loadCurrentEventSnapshot,
   qualifyEventForScheduling,
   type QualifiedEvent,
 } from './schedule-bot';
@@ -27,6 +26,9 @@ type PendingRecording = {
   id: string;
   calendarEventId: string;
   workspaceMemberId: string;
+  conferenceUrl: string;
+  startsAt: string;
+  name: string;
 };
 
 type EligiblePendingRecording = {
@@ -122,11 +124,17 @@ const fetchPendingRecordingsPage = async (
   const recordings: Record<string, unknown>[] =
     response.data?.data?.recordings ?? [];
 
-  return recordings.map((r) => ({
-    id: r.id as string,
-    calendarEventId: (r.calendarEventId as string) || '',
-    workspaceMemberId: (r.workspaceMemberId as string) || '',
-  }));
+  return recordings.map((r) => {
+    const meetingUrl = r.meetingUrl as { primaryLinkUrl?: string } | undefined;
+    return {
+      id: r.id as string,
+      calendarEventId: (r.calendarEventId as string) || '',
+      workspaceMemberId: (r.workspaceMemberId as string) || '',
+      conferenceUrl: meetingUrl?.primaryLinkUrl || '',
+      startsAt: (r.date as string) || '',
+      name: (r.name as string) || '',
+    };
+  });
 };
 
 const fetchPendingRecordings = async (limit: number): Promise<PendingRecording[]> => {
@@ -191,9 +199,12 @@ export const processPendingSchedules = async (): Promise<BatchResult> => {
       return result;
     }
 
-    if (pending.length === 0) return result;
+    if (pending.length === 0) {
+      console.error('[process-pending] no pending recordings found');
+      return result;
+    }
 
-    logger.debug(`found ${pending.length} pending recordings to process`);
+    console.error(`[process-pending] found ${pending.length} pending recordings to process`);
 
     // Re-resolve live event state for each pending row.
     const now = Date.now();
@@ -201,6 +212,7 @@ export const processPendingSchedules = async (): Promise<BatchResult> => {
     const valid: EligiblePendingRecording[] = [];
     for (const rec of pending) {
       if (!rec.calendarEventId) {
+        console.error(`[process-pending] ${rec.id}: no calendarEventId → FAILED`);
         try {
           await patchRecording(rec.id, { status: 'FAILED' });
         } catch {
@@ -210,21 +222,12 @@ export const processPendingSchedules = async (): Promise<BatchResult> => {
         continue;
       }
 
-      // Load current event state. loadCurrentEventSnapshot returns null when
-      // the event is deleted (404) and throws on transient errors (network, 500).
-      let snapshot: Awaited<ReturnType<typeof loadCurrentEventSnapshot>>;
-      try {
-        snapshot = await loadCurrentEventSnapshot(rec.calendarEventId);
-      } catch (error) {
-        // Transient error — skip and retry on next cron tick
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.warn(`Transient error loading event ${rec.calendarEventId}, will retry: ${msg}`);
-        result.skipped++;
-        continue;
-      }
+      // Use event data stored in the recording (set by on-calendar-event-created/updated).
+      // We can't query calendarEvents via REST — app tokens are blocked by query hooks.
+      console.error(`[process-pending] ${rec.id}: conferenceUrl=${rec.conferenceUrl} startsAt=${rec.startsAt}`);
 
-      if (!snapshot?.startsAt) {
-        // Event deleted or missing startsAt — permanently invalid
+      if (!rec.startsAt) {
+        console.error(`[process-pending] ${rec.id}: no startsAt → FAILED`);
         try {
           await patchRecording(rec.id, { status: 'FAILED' });
         } catch {
@@ -234,8 +237,9 @@ export const processPendingSchedules = async (): Promise<BatchResult> => {
         continue;
       }
 
-      const eventTime = new Date(snapshot.startsAt).getTime();
+      const eventTime = new Date(rec.startsAt).getTime();
       if (eventTime < now) {
+        console.error(`[process-pending] ${rec.id}: event in the past (${rec.startsAt}) → FAILED`);
         try {
           await patchRecording(rec.id, { status: 'FAILED' });
         } catch {
@@ -246,12 +250,13 @@ export const processPendingSchedules = async (): Promise<BatchResult> => {
       }
 
       if (eventTime > schedulingHorizon) {
+        console.error(`[process-pending] ${rec.id}: event too far in future → SKIPPED`);
         result.skipped++;
         continue;
       }
 
-      if (!snapshot.conferenceUrl) {
-        // No conference URL yet — skip and retry (URL may be added later)
+      if (!rec.conferenceUrl) {
+        console.error(`[process-pending] ${rec.id}: no conferenceUrl → SKIPPED`);
         result.skipped++;
         continue;
       }
@@ -259,11 +264,13 @@ export const processPendingSchedules = async (): Promise<BatchResult> => {
       // Qualification may return null for legitimate reasons (no qualifying members,
       // preference says don't record) or due to transient API failures in sub-calls.
       // Skip rather than FAILED so the next cron tick can retry.
+      const titleFromName = rec.name.replace(/^Pending:\s*/, '').replace(/^Pending schedule:\s*/, '');
       const qualified = await qualifyEventForScheduling(
         rec.calendarEventId,
-        snapshot.conferenceUrl,
-        snapshot.startsAt,
-        snapshot.title,
+        rec.conferenceUrl,
+        rec.startsAt,
+        titleFromName,
+        { skipDedupCheck: true },
       );
       if (!qualified) {
         result.skipped++;
@@ -367,6 +374,15 @@ export const processPendingSchedules = async (): Promise<BatchResult> => {
           }
         }
       } catch (error) {
+        if (error instanceof RateLimitError) {
+          // Rate limited — leave remaining as PENDING_SCHEDULE for next cron tick
+          const retryAfter = error.retryAfterSeconds;
+          console.error(`[process-pending] rate limited, retry after ${retryAfter}s — deferring ${valid.length - i} remaining`);
+          result.errors.push(`Rate limited — retry after ${retryAfter}s`);
+          result.skipped += valid.length - i - batch.length;
+          break;
+        }
+
         const msg = error instanceof Error ? error.message : String(error);
         result.errors.push(`Batch API error: ${msg}`);
         logger.error(`Batch API call failed: ${msg}`);

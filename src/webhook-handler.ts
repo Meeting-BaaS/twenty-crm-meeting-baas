@@ -1,12 +1,12 @@
 import { createLogger } from './logger';
 import { generateSummary } from './generate-summary';
-import { MeetingBaasApiClient } from './meeting-baas-api-client';
+import { extractParticipantNames, fetchTranscript } from './meeting-baas-api-client';
 import type { ProcessResult, SyncResult } from './types';
 import {
   parseWebhookPayload,
   verifyWebhookApiKey
 } from './webhook-validator';
-import { syncBotRecording, checkIfRecordingExists, upsertRecordingStatus } from './twenty-sync-service';
+import { detectPlatform, syncBotRecording, checkIfRecordingExists, upsertRecordingStatus } from './twenty-sync-service';
 import { downloadAndStoreRecording } from './twenty-file-upload';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -77,32 +77,30 @@ export class WebhookHandler {
         return { success: true };
       }
 
-      // bot.completed — transform, fetch transcript, summarize, sync
-      const meetingBaasClient = new MeetingBaasApiClient(meetingBaasApiKey);
-      const recordingData = meetingBaasClient.transformWebhookData(
-        payload.data,
-        payload.extra ?? undefined,
-      );
+      // bot.completed — the SDK types give us everything directly
+      const data = payload.data;
+      const extra = payload.extra ?? {};
+      const meetingUrl = (extra.meeting_url as string) || '';
+      const meetingTitle = (extra.meeting_title as string) || `Recording ${new Date().toLocaleDateString()}`;
+      const calendarEventId = extra.calendarEventId as string | undefined;
+      const workspaceMemberId = extra.workspaceMemberId as string | undefined;
+      const durationSeconds = data.duration_seconds ?? 0;
 
-      result.durationMinutes = Math.round(recordingData.duration / 60);
+      result.durationMinutes = Math.round(durationSeconds / 60);
+      const participantNames = extractParticipantNames(data);
+      console.error(`[webhook] bot_id=${data.bot_id} duration=${durationSeconds}s transcription=${data.transcription ? 'present' : 'none'} diarization=${data.diarization ? 'present' : 'none'} video=${data.video ? 'present' : 'none'} participants=${participantNames.join(', ')}`);
 
-      const transcript = await meetingBaasClient.fetchTranscript(recordingData);
+      // Fetch transcript from the presigned URLs the SDK provides
+      const transcript = await fetchTranscript(data.diarization, data.transcription);
       if (transcript) {
-        recordingData.transcript = transcript;
-        this.logger.debug(`transcript fetched (${transcript.length} chars)`);
+        console.error(`[webhook] transcript fetched (${transcript.length} chars)`);
+      } else {
+        console.error(`[webhook] no transcript available`);
       }
 
       // Generate AI summary from transcript (non-fatal if it fails)
-      const summary = await generateSummary(recordingData.transcript);
-      if (summary) {
-        this.logger.debug('AI summary generated');
-      }
-
-      // calendarEventId and workspaceMemberId come from the bot's `extra` field,
-      // set by schedule-bot.ts when creating the scheduled bot
-      const extra = recordingData.extra;
-      const calendarEventId = extra.calendarEventId as string | undefined;
-      const workspaceMemberId = extra.workspaceMemberId as string | undefined;
+      const summary = await generateSummary(transcript);
+      console.error(`[webhook] summary: ${summary ? `generated (${summary.length} chars)` : 'none (empty transcript or AI failed)'}`);
 
       const syncResult: SyncResult = {
         recordingsProcessed: 0,
@@ -111,24 +109,18 @@ export class WebhookHandler {
         errors: [],
       };
 
-      // Store the presigned URL directly — it's valid for ~4 hours.
-      // Twenty logic functions can't return HTTP 302 redirects, so a proxy
-      // endpoint doesn't help. The recording-video endpoint can refresh an
-      // expired URL on demand.
-      const mp4UrlForSync = recordingData.mp4Url;
-
       const recordingId = await syncBotRecording(
         {
-          botId: recordingData.botId,
-          title: recordingData.title,
-          date: recordingData.date,
-          duration: recordingData.duration,
-          transcript: recordingData.transcript,
+          botId: data.bot_id,
+          title: meetingTitle,
+          date: data.joined_at || new Date().toISOString(),
+          duration: durationSeconds,
+          transcript,
           summary: summary ?? undefined,
-          mp4Url: mp4UrlForSync,
-          meetingUrl: recordingData.meetingUrl,
-          platform: recordingData.platform,
-          participantNames: recordingData.participantNames,
+          mp4Url: data.video || '',
+          meetingUrl,
+          platform: detectPlatform(meetingUrl),
+          participantNames,
           calendarEventId,
           workspaceMemberId,
         },
@@ -147,8 +139,8 @@ export class WebhookHandler {
 
         // Download MP4 and store in Twenty's file storage (non-fatal)
         const storeLocally = process.env.STORE_RECORDINGS_LOCALLY !== 'false';
-        if (storeLocally && recordingData.mp4Url) {
-          await downloadAndStoreRecording(recordingData.mp4Url, recordingId);
+        if (storeLocally && data.video) {
+          await downloadAndStoreRecording(data.video, recordingId);
         }
       }
 
